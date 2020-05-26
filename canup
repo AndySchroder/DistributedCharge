@@ -1,0 +1,9 @@
+#!/bin/bash
+
+#just use the same script for the car and the wall. will just error out of the device is not present, but it doesn't matter.
+
+
+sudo ip link set can10 up type can bitrate 33300		#wall SWCAN
+
+sudo ip link set can11 up type can bitrate 33300		#car SWCAN
+sudo ip link set can12 up type can bitrate 500000		#car TWCAN
