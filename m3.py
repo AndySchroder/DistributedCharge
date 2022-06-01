@@ -14,7 +14,7 @@
 
 import cantools
 
-m3=cantools.database.load_file('model3dbc/Model3CAN.dbc')
+m3=cantools.database.load_file('../model3dbc/Model3CAN.dbc')
 
 def getCANvalue(message,IDname,Signal):
 	try:

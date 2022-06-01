@@ -1,6 +1,9 @@
+#!/usr/bin/env python3
+
+
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2020, Andy Schroder
+#Copyright (c) 2022, Andy Schroder
 #See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -13,14 +16,15 @@
 ################################################################
 
 from time import sleep,time
-from datetime import datetime
+from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
 from m3 import m3, getCANvalue
 from GUI import GUIThread as GUI
+from gpiozero import LED
 from collections import deque
 
-import can,isotp,u3,helpers2,threading,sys
+import can,isotp,helpers2,threading,sys,mcp3008
 
 
 
@@ -34,12 +38,12 @@ import can,isotp,u3,helpers2,threading,sys
 
 Message=can.Message
 
+FormatTimeDeltaToPaddedString=helpers2.FormatTimeDeltaToPaddedString
 RoundAndPadToString=helpers2.RoundAndPadToString
 TimeStampedPrint=helpers2.TimeStampedPrint
 
 
 ################################################################
-
 
 
 ################################################################
@@ -48,8 +52,12 @@ TimeStampedPrint=helpers2.TimeStampedPrint
 
 helpers2.PrintWarningMessages=True
 
-SWCANname='can11'						#name of the interface for the single wire can bus, the charge port can bus.
-TWCANname='can12'						#name of the interface for the two wire can bus (standard can)
+print('')
+print('')
+TimeStampedPrint('startup!')
+
+SWCANname='can0'						#name of the interface for the single wire can bus, the charge port can bus.
+TWCANname='can1'						#name of the interface for the two wire can bus (standard can)
 
 
 
@@ -57,7 +65,7 @@ TWCANname='can12'						#name of the interface for the two wire can bus (standard
 LNDhost="127.0.0.1:10009"
 LNDnetwork='mainnet'						#'mainnet' or 'testnet'
 
-LabJackSerialNumber=111111111					#need to do this if have multiple LabJacks plugged into the same computer
+
 
 
 
@@ -65,10 +73,6 @@ MaxRate=1.5			#sat/(W*hour)
 
 MaxRequiredPaymentAmount=41	#sat
 
-
-
-
-RelayON=False							#True for High ON logic, False for Low ON logic. (wall unit uses HIGH ON logic and car unit uses LOW ON logic for now)
 
 ################################################################
 
@@ -107,28 +111,34 @@ SmallStatus='Waiting For Charge Cable To Be Inserted'
 
 
 ################################################################
-#initialize the LabJack U3
+#initialize the mcp3008
 ################################################################
 
-try:	#don't error out if re-running the script in the same interpreter, just re-use the existing object
-	LabJack=u3.U3(firstFound=False,serial=LabJackSerialNumber)	#use a specific labjack and allow multiple to be plugged in at the same time.
-except:
-	pass
-LabJack.getCalibrationData()			#don't know what this is for.
+Vref=3.3
+adc = mcp3008.MCP3008(1,max_speed_hz=int(976000/15))
 
-LabJack.configIO(FIOAnalog = 15)		#is this making a permanent change and wearing out the non-volatile memory?
+def PilotAnalogVoltage():
+	return adc.read([mcp3008.CH1],Vref)[0]*7.6-12-.22
 
-LabJack.getFeedback(u3.BitDirWrite(4, 1))	# Set FIO4 to digital output
+def ProximityAnalogVoltage():
+	return adc.read([mcp3008.CH0],Vref)[0]*3.2/2.2
 
-RelayOFF=not RelayON				#always opposite of ON
 
-#default power on default for output direction is high. set FIO4 to whatever the relay off logic
-#requires (and actually reseting if RelayOFF==True just to keep.the logic simpler)
-#may be able to combine this into one line with the above setting of the output direction?
-#either way, right now, this seems to be quick enough that the coil doesn't have time to energize.
-#could use the python command that sets power on defaults in another one time run script/step,
-#but then that would require an setup step that modifies the device flash memory that would be better to avoid.
-LabJack.getFeedback(u3.BitStateWrite(4, RelayOFF))
+
+################################################################
+
+
+
+
+################################################################
+#initialize GPIO
+################################################################
+
+SWCAN_Relay = LED(16)
+
+#should be off on boot, but just make sure it is off on startup in case the script crashed/killed with it on and is being restarted without rebooting.
+SWCAN_Relay.off()
+
 
 ################################################################
 
@@ -276,8 +286,7 @@ try:
 				Current=None
 
 
-		ain0bits, = LabJack.getFeedback(u3.AIN(0))	#channel 0, also note, the "," after "ain0bits" which is used to unpack the list returned by getFeedback()
-		TheOutputVoltage=LabJack.binaryToCalibratedAnalogVoltage(ain0bits,isLowVoltage=False,channelNumber=0)
+		TheOutputVoltage=ProximityAnalogVoltage()
 
 		if SWCANActive and not Proximity:
 			Proximity=True
@@ -285,7 +294,7 @@ try:
 			BigStatus='Charge Cable Inserted'
 			SmallStatus=''
 
-			LabJack.getFeedback(u3.BitStateWrite(4, RelayON))	# Set FIO4 to output ON
+			SWCAN_Relay.on()
 			TimeStampedPrint("relay energized")
 
 			CurrentTime=time()
@@ -295,7 +304,7 @@ try:
 			Proximity=False
 			TimeStampedPrint("plug removed\n\n\n")
 
-			LabJack.getFeedback(u3.BitStateWrite(4, RelayOFF))	# Set FIO4 to output OFF
+			SWCAN_Relay.off()
 
 			BigStatus='Charge Cable Removed'
 			SmallStatus=''
@@ -359,54 +368,66 @@ try:
 
 
 					if len(ReceiveInvoicesThread.InvoiceQueue)>0:		#invoices are waiting to be paid
-						oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft()
-						AmountRequested=lnd.decode_payment_request(oldestInvoice).num_satoshis
+						try:
+							TimeStampedPrint("trying to decode the invoice")
+							oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft()
 
-#						TimeStampedPrint("seller wants to be paid "+str(AmountRequested)+" satoshis")
-						SmallStatus='Payment Requested'
+							AmountRequested=lnd.decode_payment_request(oldestInvoice).num_satoshis		#consider making timeout shorter as noted below for the other exception because it just hangs up the script and the GUI never updates while this is happening.
+							TimeStampedPrint("decoded the invoice")
 
-						if (
-								((EnergyPaidFor-EnergyDelivered)<WhoursPerPayment*0.70)			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)
-									and
-								(
-									(AmountRequested<=RequiredPaymentAmount)			#not asking for too much payment
-										or
+							TimeStampedPrint("seller wants to be paid "+str(AmountRequested)+" satoshis")
+							SmallStatus='Payment Requested'
+							AllowedError=(0.025-0.10)/(20-5)*(Amps-5)+0.1       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
+
+							if (
+									((EnergyPaidFor-EnergyDelivered)<WhoursPerPayment*0.70*2+EnergyDelivered*AllowedError+75)			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times.
+										and
 									(
-										(AmountRequested<=2*RequiredPaymentAmount)
-											and
-										(EnergyPaidFor==0)					#first payment allows 2x normal payment amount.
+										(AmountRequested<=RequiredPaymentAmount)			#not asking for too much payment
+											or
+										(
+											(AmountRequested<=2*RequiredPaymentAmount)
+												and
+											(EnergyPaidFor==0)					#first payment allows 2x normal payment amount.
+										)
 									)
-								)
-							):										#if all good, then it's time to send another invoice
+								):										#if all good, then it's time to send another invoice
 
-							try:
+								try:
 
-								TimeStampedPrint("sending payment")
+									TimeStampedPrint("sending payment")
 #should check to make sure the "expiry" has not passed on the invoice yet before paying????
-								lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
+									lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
 
-								EnergyPaidFor+=AmountRequested/CurrentRate
+									EnergyPaidFor+=AmountRequested/CurrentRate
 
-								TimeStampedPrint('WhoursReceived: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2))
+									TimeStampedPrint("sent payment for "+str(AmountRequested)+" satoshis")
+									ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=round((datetime.now()-ChargeStartTime).total_seconds())))	#round to the nearest second, then format as a zero padded string
+									TimeStampedPrint('WhoursReceived: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2)+',   ChargeSessionTime: '+ChargeTimeText)
 
-								TimeStampedPrint("sent payment for "+str(AmountRequested)+" satoshis")
+									SmallStatus='Payment Sent'
 
-								SmallStatus='Payment Sent'
-
-							except:
+								except:
 #lnd.send_payment doesn't fail (raise a python exception) if the payment fails to route, only if lnd.send_payment can't contact the lnd node. so, need to check the response from lnd.send_payment to see what actually happened
-								raise
+#also, seems to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting.
+									TimeStampedPrint("tried sending payment but there was probably a network connection issue")
+									sleep(.25)
 
-						else:
-							#seller is asking for payment to quickly, waiting until they deliver energy that was agreed upon.
-							#if they aren't happy and think they delivered enough, they will shut down.
-							#currently, the buyer will tolerate up to 20% of error. the seller tolerates 30%
-							#because they need to give time for a payment to actually be made.
-							#need to do something if AmountRequested>RequiredPaymentAmount and EnergyPaidFor>0
+							else:
+								#seller is asking for payment to quickly, waiting until they deliver energy that was agreed upon.
+								#if they aren't happy and think they delivered enough, they will shut down.
+								#currently, the buyer will tolerate up to 20% of error. the seller tolerates 30%
+								#because they need to give time for a payment to actually be made.
+								#need to do something if AmountRequested>RequiredPaymentAmount and EnergyPaidFor>0
 
 
+								ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
+	#							TimeStampedPrint("not yet time to pay, waiting")
+
+						except:
+							TimeStampedPrint("tried decoding the invoice but there was probably a network connection issue")
 							ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
-#							TimeStampedPrint("not yet time to pay, waiting")
+
 					else:
 #						TimeStampedPrint("waiting for next invoice")
 						pass
@@ -469,9 +490,8 @@ except:
 
 finally:
 
-	# the labjack remembers the state last set after the script terminates, until the USB cable is removed,
-	# so Set FIO4 to output OFF so the relay denergizes
-	LabJack.getFeedback(u3.BitStateWrite(4, RelayOFF))
+	# the state should be restored to off when python is stopped, but explicitly set to off to be sure.
+	SWCAN_Relay.off()
 
 	TimeStampedPrint("turned off relay\n\n\n")
 

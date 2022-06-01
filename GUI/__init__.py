@@ -48,6 +48,8 @@ class GUIClass(threading.Thread):
 		self.Proximity=0
 		self.MaxAmps=0
 
+		self.screenscaling=0.4
+
 	def stop(self):
 		self._stop_event.set()
 
@@ -71,7 +73,7 @@ class GUIClass(threading.Thread):
 		#see note above about how Control+C is the only way to quit when in full screen mode.
 		#warning, Alt+Tab does not work right either in full screen mode, so if you Alt+Tab and then Control+C,
 		#you won't be actually doing Control+C to the right window.
-		if True:
+		if False:
 			GUI.geometry('1900x1025+0+0')
 		else:
 			#full screen
@@ -85,7 +87,7 @@ class GUIClass(threading.Thread):
 		TopFrame.pack(side="top",anchor='n',fill='x')
 
 		MiddleFrame = Frame(GUI,background='white')
-		MiddleFrame.pack(side="top",anchor='s',fill='both',expand=True,pady=(30,30))
+		MiddleFrame.pack(side="top",anchor='s',fill='both',expand=True,pady=(int(30*self.screenscaling),int(30*self.screenscaling)))
 
 		BottomFrame = Frame(GUI,background='white')#'grey')
 		BottomFrame.pack(side="bottom",anchor='s',fill='x')
@@ -102,54 +104,62 @@ class GUIClass(threading.Thread):
 
 
 		DateTextv = StringVar()
-		DateText=Label(ClockFrame, background='white',textvariable=DateTextv,font=('Arial', 15, "bold"))
-		DateText.pack(side="right",padx=15)
-
-		BTCimageData=ImageTk.PhotoImage(Image.open(os.path.join(os.path.dirname(__file__), "BitcoinLogoRound.png")))
-		BTCimage = Label(LeftFrame, image = BTCimageData,borderwidth=0,background='white')#'black')
-		BTCimage.pack(side="top",padx=(10,0),pady=10, anchor="nw")
+		DateText=Label(ClockFrame, background='white',textvariable=DateTextv,font=('Arial', int(15*self.screenscaling), "bold"))
+		DateText.pack(side="right",padx=int(15*self.screenscaling))
 
 
-		Header=Label(RightFrame, background='white',text='Distributed Charge',font=('Courier', 80, "bold"))
-		Header.pack(anchor='center',pady=(35,20))
 
-		SmallHeader=Label(RightFrame, background='white',text='~ Electric Vehicle Charging Using Bitcoin Micropayments Over The Lightning Network ~',font=('Helvetica', 20, "bold"))
-		SmallHeader.pack(anchor='center',pady=10)
+
+		BTCImageData = Image.open(os.path.join(os.path.dirname(__file__), "BitcoinLogoRound.png"))
+		BTCImageData_resized = BTCImageData.resize((int(BTCImageData.width*self.screenscaling), int(BTCImageData.height*self.screenscaling)),Image.LANCZOS)		#think LANCZOS will give you a slightly different pixel count than requested because the request can be overconstrained if width and height don't have a common multiple(?) with self.screenscaling. need to research/think about more.
+		BTCPhotoImage=ImageTk.PhotoImage(BTCImageData_resized)	#has to be on a separate line, can't be combine with the next, not sure why.
+		BTCimage = Label(LeftFrame, image = BTCPhotoImage,borderwidth=0,background='white')#'black')
+		BTCimage.pack(side="top",padx=(int(10*self.screenscaling),int(0*self.screenscaling)),pady=int(10*self.screenscaling), anchor="nw")
+
+
+		Header=Label(RightFrame, background='white',text='Distributed Charge',font=('Courier', int(80*self.screenscaling), "bold"))
+		Header.pack(anchor='center',pady=(int(35*self.screenscaling),int(20*self.screenscaling)))
+
+		SmallHeader=Label(RightFrame, background='white',text='~ Electric Vehicle Charging Using Bitcoin Micropayments Over The Lightning Network ~',font=('Helvetica', int(20*self.screenscaling), "bold"))
+		SmallHeader.pack(anchor='center',pady=int(10*self.screenscaling))
 
 
 		Frame(MiddleFrame,background='black').pack(side="top",anchor='n',fill='x')	#horizontal line
 
 
-		BigStatusText=Label(MiddleFrame, background='white',textvariable=BigStatusTextv,font=('Helvetica', 80))
-		BigStatusText.pack(anchor='n',pady=(0,10))
+		BigStatusText=Label(MiddleFrame, background='white',textvariable=BigStatusTextv,font=('Helvetica', int(80*self.screenscaling)))
+		BigStatusText.pack(anchor='n',pady=(int(0*self.screenscaling),int(10*self.screenscaling)))
 
-		SmallStatusText=Label(MiddleFrame,background='white',textvariable=SmallStatusTextv,font=('Helvetica', 40))
-		SmallStatusText.pack(anchor="n",pady=(10,30))
+		SmallStatusText=Label(MiddleFrame,background='white',textvariable=SmallStatusTextv,font=('Helvetica', int(40*self.screenscaling)))
+		SmallStatusText.pack(anchor="n",pady=(int(10*self.screenscaling),int(30*self.screenscaling)))
 
 
 		Frame(MiddleFrame,background='black').pack(side="top",anchor='n',fill='x')	#horizontal line
 
 
 		UnitSpecificationsv = StringVar()
-		UnitSpecifications=Label(MiddleFrame,textvariable=UnitSpecificationsv,font=('Courier', 30),justify='left', background='white')#'red')
-		UnitSpecifications.pack(side='left',anchor='s',padx=(40,0))
+		UnitSpecifications=Label(MiddleFrame,textvariable=UnitSpecificationsv,font=('Courier', int(30*self.screenscaling)),justify='left', background='white')#'red')
+		UnitSpecifications.pack(side='left',anchor='s',padx=(int(40*self.screenscaling),int(0*self.screenscaling)))
 
 
 
 		OperatingConditionsv = StringVar()
-		OperatingConditions=Label(MiddleFrame,textvariable=OperatingConditionsv,font=('Courier', 30),justify='left', background='white')#'red')
-		OperatingConditions.pack(side='right',anchor='s',padx=(0,40))
+		OperatingConditions=Label(MiddleFrame,textvariable=OperatingConditionsv,font=('Courier', int(30*self.screenscaling)),justify='left', background='white')#'red')
+		OperatingConditions.pack(side='right',anchor='s',padx=(int(0*self.screenscaling),int(40*self.screenscaling)))
 
 
 		Frame(BottomFrame,background='black').pack(side="top",anchor='n',fill='x')	#horizontal line
 
 
-		WebsiteText=Label(BottomFrame,background='white',text='http://AndySchroder.com/DistributedCharge/',font=('Courier', 20))
-		WebsiteText.pack(side="left", anchor="sw",padx=10,pady=10)
+		WebsiteText=Label(BottomFrame,background='white',text='http://AndySchroder.com/DistributedCharge/',font=('Courier', int(20*self.screenscaling)))
+		WebsiteText.pack(side="left", anchor="sw",padx=int(10*self.screenscaling),pady=int(10*self.screenscaling))
 
-		AUSimage=ImageTk.PhotoImage(Image.open(os.path.join(os.path.dirname(__file__), "A.U.S-small.png")))
-		AUS = Label(BottomFrame, image = AUSimage,borderwidth=0)
-		AUS.pack(side="right", anchor="se",padx=10,pady=10)
+
+		AUSImageData = Image.open(os.path.join(os.path.dirname(__file__), "A.U.S-small.png"))
+		AUSImageData_resized = AUSImageData.resize((int(AUSImageData.width*self.screenscaling), int(AUSImageData.height*self.screenscaling)),Image.LANCZOS)		#think LANCZOS will give you a slightly different pixel count than requested because the request can be overconstrained if width and height don't have a common multiple(?) with self.screenscaling. need to research/think about more.
+		AUSPhotoImage=ImageTk.PhotoImage(AUSImageData_resized)	#has to be on a separate line, can't be combine with the next, not sure why.
+		AUSimage = Label(BottomFrame, image = AUSPhotoImage,borderwidth=0)
+		AUSimage.pack(side="right", anchor="se",padx=int(10*self.screenscaling),pady=int(10*self.screenscaling))
 
 
 

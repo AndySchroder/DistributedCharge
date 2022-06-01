@@ -1,8 +1,28 @@
 #!/bin/bash
 
 
-cd $HOME/Desktop/DistributedCharge
-sudo ./canup
-python3.8 wall.py 
+#turn off monitor screen saver. can't figure out the correct config file to edit, but it works when place here, so it is fine
+xset s off         # don't activate screensaver
+xset -dpms         # disable DPMS (Energy Star) features.
+xset s noblank     # don't blank the video device
 
+
+
+
+
+
+
+
+cd $HOME/Desktop/DistributedCharge
+
+while true
+
+do
+	stdbuf -oL -eL python3 -u ./wall.py>>output-wall.txt 2>&1		#stdbuf no longer seems to work right (might have on an older ubuntu version???) instead need to use the -u option, and actually may no longer need stdbuf at all with the -u option (???)
+
+	#wait a second before relaunching
+	#note, if the script was killed or died without allowing for the digital outputs to be transitioned to a low state, it will take 15 seconds to restart the script, which resets them at the start of the script.
+	sleep 15
+
+done
 

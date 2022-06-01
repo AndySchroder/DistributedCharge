@@ -1,6 +1,9 @@
+#!/usr/bin/env python3
+
+
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2020, Andy Schroder
+#Copyright (c) 2022, Andy Schroder
 #See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -13,14 +16,15 @@
 ################################################################
 
 from time import sleep,time
-from datetime import datetime
+from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
 from m3 import m3, getCANvalue
 from GUI import GUIThread as GUI
+from gpiozero import LED
 
 
-import can,isotp,u3,helpers2,sys
+import can,isotp,helpers2,sys,mcp3008
 
 from pathlib import Path
 
@@ -34,12 +38,12 @@ import TWCManager
 
 Message=can.Message
 
+FormatTimeDeltaToPaddedString=helpers2.FormatTimeDeltaToPaddedString
 RoundAndPadToString=helpers2.RoundAndPadToString
 TimeStampedPrint=helpers2.TimeStampedPrint
 
 
 ################################################################
-
 
 
 ################################################################
@@ -48,7 +52,11 @@ TimeStampedPrint=helpers2.TimeStampedPrint
 
 helpers2.PrintWarningMessages=True
 
-SWCANname='can10'						#name of the interface for the single wire can bus, the charge port can bus.
+print('')
+print('')
+TimeStampedPrint('startup!')
+
+SWCANname='can0'						#name of the interface for the single wire can bus, the charge port can bus.
 
 
 
@@ -57,18 +65,17 @@ SWCANname='can10'						#name of the interface for the single wire can bus, the c
 LNDhost="127.0.0.1:10009"
 LNDnetwork='mainnet'						#'mainnet' or 'testnet'
 
-LabJackSerialNumber=222222222					#need to do this if have multiple LabJacks plugged into the same computer
 ProximityVoltage=1.5						#Voltage that indicates charge cable has been plugged in
+ProximityVoltageTolerance=0.05*2
 
 
 CurrentRate=1							#sat/(W*hour)
 WhoursPerPayment=int(25)					#W*hour/payment
 RequiredPaymentAmount=int(WhoursPerPayment*CurrentRate)		#sat/payment
-MaxAmps=24
+MaxAmps=6       #5 doesn't seem to work (the car just reverts to 6 but the Distributed Charge display still says 5), but if 6 is used, can manually drop to 5 on the car screen. don't want to go between 7 and 18 amps because it tries to do the "spike amps", and this also includes manually overriding on the car screen.
 
 
 
-RelayON=True							#True for High ON logic, False for Low ON logic. (wall unit uses HIGH ON logic and car unit uses LOW ON logic for now)
 
 ################################################################
 
@@ -109,28 +116,34 @@ SmallStatus='Waiting For Charge Cable To Be Inserted'
 
 
 ################################################################
-#initialize the LabJack U3
+#initialize the mcp3008
 ################################################################
 
-try:	#don't error out if re-running the script in the same interpreter, just re-use the existing object
-	LabJack=u3.U3(firstFound=False,serial=LabJackSerialNumber)	#use a specific labjack and allow multiple to be plugged in at the same time.
-except:
-	pass
-LabJack.getCalibrationData()			#don't know what this is for.
+Vref=3.3
+adc = mcp3008.MCP3008(1,max_speed_hz=int(976000/15))
 
-LabJack.configIO(FIOAnalog = 15)		#is this making a permanent change and wearing out the non-volatile memory?
+def PilotAnalogVoltage():
+	return adc.read([mcp3008.CH1],Vref)[0]*7.6-12-.22
 
-LabJack.getFeedback(u3.BitDirWrite(4, 1))	# Set FIO4 to digital output
+def ProximityAnalogVoltage():
+	return adc.read([mcp3008.CH0],Vref)[0]*3.2/2.2
 
-RelayOFF=not RelayON				#always opposite of ON
 
-#default power on default for output direction is high. set FIO4 to whatever the relay off logic
-#requires (and actually reseting if RelayOFF==True just to keep.the logic simpler)
-#may be able to combine this into one line with the above setting of the output direction?
-#either way, right now, this seems to be quick enough that the coil doesn't have time to energize.
-#could use the python command that sets power on defaults in another one time run script/step,
-#but then that would require an setup step that modifies the device flash memory that would be better to avoid.
-LabJack.getFeedback(u3.BitStateWrite(4, RelayOFF))
+
+################################################################
+
+
+
+
+################################################################
+#initialize GPIO
+################################################################
+
+SWCAN_Relay = LED(16)
+
+#should be off on boot, but just make sure it is off on startup in case the script crashed/killed with it on and is being restarted without rebooting.
+SWCAN_Relay.off()
+
 
 ################################################################
 
@@ -140,7 +153,7 @@ LabJack.getFeedback(u3.BitStateWrite(4, RelayOFF))
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(LNDhost, network=LNDnetwork, admin=True)
+lnd = LNDClient(LNDhost, network=LNDnetwork, macaroon_filepath=str(Path.home())+'/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon')
 
 ################################################################
 
@@ -172,8 +185,7 @@ SWCAN = can.interface.Bus(channel=SWCANname, bustype='socketcan',can_filters=[	#
 #other standard can messaging that occurs in this script
 
 SWCAN_ISOTP = isotp.socket()				#default recv timeout is 0.1 seconds
-#SWCAN_ISOTP.set_fc_opts(stmin=5, bs=10)		#see https://can-isotp.readthedocs.io/en/latest/isotp/socket.html#socket.set_fc_opts
-SWCAN_ISOTP.set_fc_opts(stmin=25, bs=10)
+SWCAN_ISOTP.set_fc_opts(stmin=25, bs=10)		#see https://can-isotp.readthedocs.io/en/latest/isotp/socket.html#socket.set_fc_opts
 SWCAN_ISOTP.bind(SWCANname, isotp.Address(rxid=1996, txid=1997))		#note: rxid of wall is txid of car, and txid of wall is rxid of the car
 
 
@@ -214,9 +226,13 @@ GUI.start()			#starts .run() (and maybe some other stuff?)
 
 TWCManager.MainThread.start()
 while len(TWCManager.master.slaveTWCRoundRobin)<1:			#wait until connected to a wall unit.
+	#this is not deterministic though because seems to disconnect sometimes, especially when using crontab to lauch the scrpt on boot (which is really weird).
 	sleep(.1)
-WallUnit=TWCManager.master.slaveTWCRoundRobin[0]			#only one wall unit now, so using number 0 blindly
 
+myTWCID=TWCManager.master.slaveTWCRoundRobin[0].TWCID			#only one wall unit now, so using number 0 blindly
+TimeStampedPrint('TWCID: '+str(myTWCID))
+
+TimeStampedPrint("should be connected to the TWC")
 
 
 ####################
@@ -260,12 +276,11 @@ try:
 		TWCManager.master.setChargeNowTimeEnd(int(3600))		#set how long to hold the current for, in seconds. need to refine this statement if have multiple wall units.
 
 
-		ain0bits, = LabJack.getFeedback(u3.AIN(0))	#channel 0, also note, the "," after "ain0bits" which is used to unpack the list returned by getFeedback()
-		TheOutputVoltage=LabJack.binaryToCalibratedAnalogVoltage(ain0bits,isLowVoltage=False,channelNumber=0)
+		TheOutputVoltage=ProximityAnalogVoltage()
 
 		#print TheOutputVoltage
 
-		if (TheOutputVoltage > ProximityVoltage-0.05) and (not Proximity):
+		if (TheOutputVoltage > ProximityVoltage-ProximityVoltageTolerance) and (not Proximity):
 
 			if (time()>ProximityLostTime+15):			#wait at least 15 seconds after the plug was removed to start looking for proximity again
 				if ProximityCheckStartTime==-1:
@@ -278,7 +293,7 @@ try:
 					ReInsertedMessagePrinted=False
 					ProximityCheckStartTime=-1
 
-					LabJack.getFeedback(u3.BitStateWrite(4, RelayON))	# Set FIO4 to output ON
+					SWCAN_Relay.on()
 					TimeStampedPrint("relay energized")
 					CurrentTime=time()
 					InitialInvoice=True
@@ -296,16 +311,16 @@ try:
 				ReInsertedMessagePrinted=True
 
 
-			print(str(TheOutputVoltage))
+			TimeStampedPrint('Proximity Voltage: '+str(TheOutputVoltage))
 
 
 
-		elif (TheOutputVoltage < ProximityVoltage-0.05*2) and (not Proximity) and (ProximityCheckStartTime!=-1 or ReInsertedMessagePrinted):
+		elif (TheOutputVoltage < ProximityVoltage-ProximityVoltageTolerance*2) and (not Proximity) and (ProximityCheckStartTime!=-1 or ReInsertedMessagePrinted):
 			ProximityLostTime=time()
 			ReInsertedMessagePrinted=False
 			ProximityCheckStartTime=-1
 			TimeStampedPrint("plug was removed before the relay was energized")
-			print(str(TheOutputVoltage))
+			TimeStampedPrint('Proximity Voltage: '+str(TheOutputVoltage))
 
 			BigStatus='Charge Cable Removed'
 			SmallStatus=''
@@ -314,11 +329,11 @@ try:
 			SmallStatus='Waiting For Charge Cable To Be Inserted'
 
 
-		elif (TheOutputVoltage < ProximityVoltage-0.05*2) and (Proximity):
+		elif (TheOutputVoltage < ProximityVoltage-ProximityVoltageTolerance*2) and (Proximity):
 			Proximity=False
 			ProximityLostTime=time()
 			TimeStampedPrint("plug removed\n\n\n")
-			print(str(TheOutputVoltage))
+			TimeStampedPrint('Proximity Voltage: '+str(TheOutputVoltage))
 
 			BigStatus='Charge Cable Removed'
 			SmallStatus=''
@@ -330,12 +345,17 @@ try:
 			Volts	=	None
 			Amps	=	None
 
-			LabJack.getFeedback(u3.BitStateWrite(4, RelayOFF))	# Set FIO4 to output OFF
+			SWCAN_Relay.off()
 
 
 
-		Volts=WallUnit.voltsPhaseA
-		Amps=WallUnit.reportedAmpsActual
+		try:
+			#have to reference each time because the slave is destroyed and created if disconnected, and sometimes it disconnects
+			Volts=TWCManager.master.slaveTWCs[myTWCID].voltsPhaseA
+			Amps=TWCManager.master.slaveTWCs[myTWCID].reportedAmpsActual
+		except:
+			Volts=-99
+			Amps=-99
 
 
 
@@ -350,7 +370,8 @@ try:
 
 			else:
 
-				if (Volts is not None) and (Amps is not None):		#should probably wait above when WallUnit object is created until these are available.
+				if (Volts is not None) and (Amps is not None):
+#need to do more rigorous testing of a stable connection to the TWC above instead before getting to this point. especially since None can be reset to somethign else like -99.
 					PreviousTime=CurrentTime
 					CurrentTime=time()
 					deltaT=(CurrentTime-PreviousTime)/3600		#hours, small error on first loop when SWCANActive is initially True
@@ -363,19 +384,25 @@ try:
 						if PendingInvoice:
 
 							#check to see if the current invoice has been paid
+							try:
+								TimeStampedPrint("trying to check the current invoice's payment status")
+								OutstandingInvoiceStatus=lnd.lookup_invoice(OutstandingInvoice.r_hash)
+								TimeStampedPrint("checked the current invoice's payment status")
+								if OutstandingInvoiceStatus.settled:
+									EnergyPaidFor+=OutstandingInvoiceStatus.value/(CurrentRate)		#W*hours
+									PendingInvoice=False
+									InitialInvoice=False							#reset every time just to make the logic simpler
 
-							OutstandingInvoiceStatus=lnd.lookup_invoice(OutstandingInvoice.r_hash)
-							if OutstandingInvoiceStatus.settled:
-								EnergyPaidFor+=OutstandingInvoiceStatus.value/(CurrentRate)		#W*hours
-								PendingInvoice=False
-								InitialInvoice=False							#reset every time just to make the logic simpler
+									TimeStampedPrint("payment received, time since last payment received="+str(time()-LastPaymentReceivedTime)+"s")
+									ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=round((datetime.now()-ChargeStartTime).total_seconds())))	#round to the nearest second, then format as a zero padded string
+									TimeStampedPrint('WhoursDelivered: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2)+',   ChargeSessionTime: '+ChargeTimeText)
 
-								TimeStampedPrint('WhoursDelivered: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2))
-								TimeStampedPrint("payment received, time since last payment received="+str(time()-LastPaymentReceivedTime)+"s")
+									LastPaymentReceivedTime=time()
 
-								LastPaymentReceivedTime=time()
-
-								SmallStatus='Payment Received'
+									SmallStatus='Payment Received'
+							except:
+								TimeStampedPrint("tried checking the current invoice's payment status but there was probably a network connection issue")
+								sleep(.25)
 
 
 						#now that the pending invoices have been processed, see if it's time to send another invoice, or shutdown power if invoices haven't been paid in a timely manner.
@@ -383,21 +410,29 @@ try:
 						#time to send another invoice
 						#adjust multiplier to decide when to send next invoice. can really send as early as possible because car just waits until it's really time to make a payment.
 						#was 0.5, but higher is probably really better because don't know how long the lightning network payment routing is actually going to take.
-						#send payment request after 10% has been delivered (90% ahead of time)
+						#send payment request 2*90% ahead of time so the buyer can have it ready in case they have a poor internet connection and want to pay early to avoid disruptions.
 						#note, because below 1% error is allowed, this test may actually not have much meaning considering over the course of a charging cycle
 						#the total error may be larger than an individual payment amount, so EnergyPaidFor-EnergyDelivered is likely less than 0 and therefor
 						#a new invoice will just be sent right after the previous invoice was paid, rather than waiting.
-						if ((EnergyPaidFor-EnergyDelivered)<RequiredPaymentAmount*0.90) and not PendingInvoice:
+						if ((EnergyPaidFor-EnergyDelivered)<RequiredPaymentAmount*2*0.90) and not PendingInvoice:
 							RequiredPaymentAmount=WhoursPerPayment*CurrentRate				#sat
 
-							OutstandingInvoice=lnd.add_invoice(RequiredPaymentAmount)
+							try:
+								TimeStampedPrint("trying to get an invoice")
+								OutstandingInvoice=lnd.add_invoice(RequiredPaymentAmount)
+								TimeStampedPrint("got an invoice")
 
-#need to do a try except here, because the buyer may not be listening properly
-							SWCAN_ISOTP.send(OutstandingInvoice.payment_request.encode())			#send the new invoice using CAN ISOTP
-							TimeStampedPrint("sent new invoice for "+str(RequiredPaymentAmount)+" satoshis")
-							SmallStatus='Payment Requested'
+								#need to add a try except here, because the buyer may not be listening properly!!!!!!!!!!!!
+								SWCAN_ISOTP.send(OutstandingInvoice.payment_request.encode())			#send the new invoice using CAN ISOTP
+								TimeStampedPrint("sent new invoice for "+str(RequiredPaymentAmount)+" satoshis")
+								SmallStatus='Payment Requested'
 
-							PendingInvoice=True
+								PendingInvoice=True
+
+							except:
+								TimeStampedPrint("tried getting a new invoice but there was probably a network connection issue")
+								sleep(.25)
+
 
 						elif PendingInvoice:									#waiting for payment
 							#TimeStampedPrint("waiting for payment, and limit not yet reached")
@@ -412,24 +447,30 @@ try:
 				else:
 					#try to negotiate the offer
 					if (message is not None) and (message.arbitration_id == 1999 and message.data[0]==1):		#don't really need to convert to int since hex works fine for a 0 vs 1
-						#buyer accepted the rate
-						OfferAccepted=True
-						TimeStampedPrint("buyer accepted rate")
 
-						ChargeStartTime=datetime.now()
+						try:
+							FirstRequiredPaymentAmount=1*RequiredPaymentAmount				#sat, adjust multiplier if desire the first payment to be higher than regular payments.
+							TimeStampedPrint("trying to get first invoice")
+							OutstandingInvoice=lnd.add_invoice(FirstRequiredPaymentAmount)
+							TimeStampedPrint("got first invoice")
 
-						BigStatus='Charging'
-						SmallStatus='Sale Terms Accepted'
+							#buyer accepted the rate
+							OfferAccepted=True
+							TimeStampedPrint("buyer accepted rate")
 
-						FirstRequiredPaymentAmount=1*RequiredPaymentAmount				#sat, adjust multiplier if desire the first payment to be higher than regular payments.
+							ChargeStartTime=datetime.now()
 
-						OutstandingInvoice=lnd.add_invoice(FirstRequiredPaymentAmount)
-						SWCAN_ISOTP.send(OutstandingInvoice.payment_request.encode())
-						TimeStampedPrint("sent first invoice for "+str(FirstRequiredPaymentAmount)+" satoshis")
+							BigStatus='Charging'
+							SmallStatus='Sale Terms Accepted'
 
-						LastPaymentReceivedTime=time()			#fudged since no payment actually received yet, but want to still time since invoice sent, and need variable to be initialized.
+							SWCAN_ISOTP.send(OutstandingInvoice.payment_request.encode())
+							TimeStampedPrint("sent first invoice for "+str(FirstRequiredPaymentAmount)+" satoshis")
 
-						PendingInvoice=True
+							PendingInvoice=True
+						except:
+#probably the protocol will get stuck if this exception is caught because the buyer won't re-send the acceptance message. maybe need buyer to keep repeating the acceptance message until the seller sends an acknowledgement???
+							TimeStampedPrint("tried getting a new (first) invoice but there was probably a network connection issue")
+							sleep(.25)
 
 					elif (message is not None) and (message.arbitration_id == 1999 and message.data[0]==0):
 						OfferAccepted=False
@@ -446,6 +487,7 @@ try:
 						SmallStatus='Provided An Offer'
 						#SmallStatus='Sale Terms Offered To Vehicle'
 
+						LastPaymentReceivedTime=time()			#fudged since no payment actually received yet, but want to still time since invoice sent, and need variable to be initialized.
 
 
 				if (
@@ -460,8 +502,8 @@ try:
 						(((EnergyPaidFor-EnergyDelivered*0.99)<-WhoursPerPayment*0.30)	and	InitialInvoice)
 					):
 
-					TimeStampedPrint("buyer never paid, need to kill power")
-					PowerKilled=True
+					TimeStampedPrint("buyer never paid, need to kill power, time since last payment received="+str(time()-LastPaymentReceivedTime)+"s")
+					PowerKilled=True		#need to be smarter and make sure power is actually killed (monitor amps is one way) because it doesn't always seem to work. maybe it doesn't always work because need to also add myTWCID to the following command (and actually, should consider adding it above in some other commands as well?)?
 					TWCManager.master.sendStopCommand()					#need to refine this statement if have multiple wall units.
 					SmallStatus='Vehicle Did Not Make Payment'
 
@@ -491,9 +533,8 @@ except:
 
 finally:
 
-	# the labjack remembers the state last set after the script terminates, until the USB cable is removed,
-	# so Set FIO4 to output OFF so the relay denergizes
-	LabJack.getFeedback(u3.BitStateWrite(4, RelayOFF))
+	# the state should be restored to off when python is stopped, but explicitly set to off to be sure.
+	SWCAN_Relay.off()
 
 	TimeStampedPrint("turned off relay\n\n\n")
 
