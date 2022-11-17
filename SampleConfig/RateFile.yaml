@@ -1,0 +1,102 @@
+
+
+SellOfferTerms:
+        Duration:
+#                Time:                           86400                   # =60*60*24
+                Time:                           720
+#                Time:                           7200
+        Rate:
+
+                # note: values for multiple rate types that aren't selected in Type can be left in this file and are ignored, but they are still sent to the buyer, so if that is a privacy concern, they should be removed.
+
+#                Type:                           'Constant'              # other options: 'InterpolationTable', 'Sinusoid'
+#                ConstantValue:                  2.9                     # sat/(W*hour)
+
+#                Type:                           'InterpolationTable'
+#                BasicInterpolationTableValues:
+#                                                [2.2,2.9,2.2]           # sat/(W*hour), uniformly spaced in time from 0:00:00 to 24:00:00 (so first and last point are the same and should have the same value)
+
+                Type:                           'Sinusoid'
+                SinusoidValues:         
+                        Day:
+                                Max:            2.0                     # sat/(W*hour)
+                                Min:            0.5                     # sat/(W*hour)
+                                TimeShift:      21600                   # =60*60*24/4                # forward relative to 00:00:00 (which is when the default min value is)
+                                TimePeriod:     86400                   # =60*60*24
+                        Year:
+                                Max:            0.5                     # sat/(W*hour)
+                                Min:            0.0                     # sat/(W*hour)
+                                TimeShift:      7884000                 # =60*60*24*365/4            # forward relative to 00:00:00, January 1st (which is when the default min value is)
+                                TimePeriod:     31536000                # =60*60*24*365              # TODO: deal with leap years properly
+
+        Payments:
+                InitialDepositMultiple:         20                      # integers only
+
+                                                                        # this is a deposit for the seller risking the buyer not paying and having lost opportunity costs if they buy less energy over the time range than the seller would
+                                                                        # like to sell (and it costs the seller something to agree to make the energy available and it go unsold) and the cost of having to deal with evicting a customer
+                PrePayment:                     1000                    # sat,	integer
+
+                MinPayment:                     25                      # sat, integer, don't want it too low because that will require too much CPU, network, etc. activity
+                MaxPayment:                     1000000                # sat, integer, might not want it too high because of known channel or routing limitations. should be less than Volts*Amps*(OfferStopTime-OfferStartTime)/(60*60)*Rate .
+
+
+
+        Electrical:
+                Voltage:
+                        Minimum:                109.0                   # V, The minimum voltage the seller will provide when at the maximum current.
+                        Nominal:                120.0                   # V, The nominal voltage the seller provides without any load.
+                        Maximum:                131.0                   # V, The maximum voltage the seller will provide.
+                Current:
+                        Maximum:                14.5                    # A,    The maximum current the seller will provide before the the energy flow is cut off. This should be slightly lower than what will cause the circuit breaker to trip, so that it can be electronically reset, leaving the mechanical circuit breaker as a backup.
+
+
+
+
+BuyOfferTerms:
+        Duration:
+                MinTime:                        600
+#                MinTime:                        172800                  # limit to integer resolution, =60*60*24*2
+                MaxTime:                        1209600                 # limit to integer resolution, =60*60*24*14
+
+        Rate:
+
+                Type:                           'Constant'              # other options: 'InterpolationTable', 'Sinusoid'
+                ConstantValue:                  3.0                    # sat/(W*hour)
+#                ConstantValue:                  1.0                    # sat/(W*hour)
+
+#                Type:                           'InterpolationTable'
+#                BasicInterpolationTableValues:                          # ignored unless Type is set to InterpolationTable above
+#                                                [2.5,3.2,2.6]           # sat/(W*hour), uniformly spaced in time from 0:00:00 to 23:59:59
+
+#                Type:                           'Sinusoid'
+#                SinusoidValues:                                         # ignored unless Type is set t0 Sinusoid above
+#                        Day:
+#                                Max:            2.1                    # sat/(W*hour)
+#                                Min:            1.6                    # sat/(W*hour)
+#                                TimeShift:      21600                   # =60*60*24/4                # forward relative to 00:00:00 (which is when the default min value is)
+#                                TimePeriod:     86400                   # =60*60*24
+#                        Year:
+#                                Max:            0.6                    # sat/(W*hour)
+#                                Min:            0.0                    # sat/(W*hour)
+#                                TimeShift:      7884000                 # =60*60*24*365/4            # forward relative to 00:00:00, January 1st (which is when the default min value is)
+#                                TimePeriod:     31536000                # =60*60*24*365              # TODO: deal with leap years properly
+
+        Payments:
+                DesiredPaymentSize:             500                     # sats,	buyer may request to make larger payment sizes if they think their channels can handle it and they want to make less frequent payments.
+
+                MinPayment:                     95
+                MaxPayment:                     1000
+                MaxPrePayment:                  1200
+                MaxInitialDeposit:              200000
+
+        Electrical:
+                Voltage:
+                        MinimumAllowed:         105.0
+                        MaximumAllowed:         135.0
+                Current:
+                        MaximumRequired:        14.0
+
+
+
+
+

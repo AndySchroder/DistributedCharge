@@ -18,11 +18,14 @@ cd $HOME/Desktop/DistributedCharge
 while true
 
 do
-	stdbuf -oL -eL python3 -u ./car.py>>output-car.txt 2>&1		#stdbuf no longer seems to work right (might have on an older ubuntu version???) instead need to use the -u option, and actually may no longer need stdbuf at all with the -u option (???)
+	# stdbuf no longer seems to work right (might have on an older ubuntu version???)
+	# instead need to use the -u option with python3 (and actually may no longer
+	# need stdbuf at all with the -u option ???).
+	# need to use the -u option to get outputs to be written in a timely manner.
+	stdbuf -oL -eL python3 -u ./car.py>>$HOME/.dc/output-car.txt 2>&1
 
 	#wait a second before relaunching
-	#note, if the script was killed or died without allowing for the digital outputs to be transitioned to a low state, it will take 15 seconds to restart the script, which resets them at the start of the script.
-	sleep 15
+	#note, if the script was killed or died without allowing for the digital outputs to be transitioned to a low state, it will take 10 seconds to restart the script, which resets them at the start of the script.
+	sleep 10
 
 done
-

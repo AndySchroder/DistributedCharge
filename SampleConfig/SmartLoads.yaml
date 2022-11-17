@@ -1,0 +1,36 @@
+
+RateServer:
+                HostName        : 'localhost'
+
+
+RateLimits :                                    # set what is considered a high and low rate so that loads can be varied appropriately
+                LowLoadRate     : 3.0           # sat/(W*hour), at the LowLoadRate (a higher energy rate) loads will be reduced as low as possible
+                HighLoadRate    : 1.0           # sat/(W*hour), at HighLoadRate (a lower energy rate) loads will be as high as needed
+
+
+RemoteVariableLoadDetails :
+                        -
+                                HostName                : 'load-0'
+                                
+                        -
+                                HostName                : 'load-1'
+                                Port                    : 22
+                                PowerConsumptionNotes   : 'This runs stress-ng on linux.'
+#                        -
+#                                HostName                : 'localhost'
+#                                Port                    : 23
+
+
+LocalDiscreteLoadDetails :
+                        -
+                                GPIONumber              : 27
+                                LoadPriority            : 0.25
+                                Description             : 'Dehumidifier'
+                                PowerConsumptionNotes   : '~700W after compressor kicks on'
+
+                        -
+                                GPIONumber              : 26
+                                LoadPriority            : 0.50
+                                Description             : 'Lawn Mower Battery Charger'
+                                PowerConsumptionNotes   : '~550W'
+

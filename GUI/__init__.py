@@ -1,7 +1,10 @@
+
+
+
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2020, Andy Schroder
-#See the file README.md for licensing information.
+# Copyright (c) 2022, Andy Schroder
+# See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
 
@@ -11,14 +14,12 @@
 from time import sleep
 from datetime import datetime,timedelta
 
-import threading,helpers2,os
+import threading,os
 
 from PIL import ImageTk, Image
 from tkinter import Tk,StringVar,Label,CENTER,Frame,LEFT
 
-
-FormatTimeDeltaToPaddedString=helpers2.FormatTimeDeltaToPaddedString
-RoundAndPadToString=helpers2.RoundAndPadToString
+from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,FullDateTimeString
 
 
 
@@ -38,14 +39,17 @@ class GUIClass(threading.Thread):
 		#initialize variables, trying to make them match the main scripts initial values, although don't know if it really matters
 		self.Volts=0
 		self.Amps=0
+		self.Power=0
 		self.BigStatus=''
 		self.SmallStatus=''
 		self.EnergyDelivered=0
-		self.EnergyPaidFor=0
-		self.CurrentRate=0
+		self.EnergyPayments=0
+		self.EnergyCost=0
+		self.RecentRate=0
 		self.RequiredPaymentAmount=0
 		self.ChargeStartTime=-1
-		self.Proximity=0
+		self.ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=0))
+		self.Connected=False
 		self.MaxAmps=0
 
 		self.screenscaling=0.4
@@ -104,7 +108,7 @@ class GUIClass(threading.Thread):
 
 
 		DateTextv = StringVar()
-		DateText=Label(ClockFrame, background='white',textvariable=DateTextv,font=('Arial', int(15*self.screenscaling), "bold"))
+		DateText=Label(ClockFrame, background='white',textvariable=DateTextv,font=('Arial', int(25*self.screenscaling), "bold"))
 		DateText.pack(side="right",padx=int(15*self.screenscaling))
 
 
@@ -117,11 +121,9 @@ class GUIClass(threading.Thread):
 		BTCimage.pack(side="top",padx=(int(10*self.screenscaling),int(0*self.screenscaling)),pady=int(10*self.screenscaling), anchor="nw")
 
 
-		Header=Label(RightFrame, background='white',text='Distributed Charge',font=('Courier', int(80*self.screenscaling), "bold"))
+		Header=Label(RightFrame, background='white',text='Distributed Charge - GRID',font=('Courier', int(80*self.screenscaling), "bold"))
 		Header.pack(anchor='center',pady=(int(35*self.screenscaling),int(20*self.screenscaling)))
 
-		SmallHeader=Label(RightFrame, background='white',text='~ Electric Vehicle Charging Using Bitcoin Micropayments Over The Lightning Network ~',font=('Helvetica', int(20*self.screenscaling), "bold"))
-		SmallHeader.pack(anchor='center',pady=int(10*self.screenscaling))
 
 
 		Frame(MiddleFrame,background='black').pack(side="top",anchor='n',fill='x')	#horizontal line
@@ -166,18 +168,18 @@ class GUIClass(threading.Thread):
 
 
 
-		ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=0))
+
 
 		while True:
 
-			DateTextv.set(datetime.now().strftime('%Y.%m.%d  -  %H.%M.%S'))
+			DateTextv.set(FullDateTimeString(datetime.now()))
 
 			BigStatusTextv.set(self.BigStatus)				
 			SmallStatusTextv.set(self.SmallStatus)
 
 
 
-
+#not sure why None is used instead of just 0 in wall.py and car.py
 			if (self.Volts is not None) and (self.Amps is not None) and (self.MaxAmps is not None):
 				VoltsPrint=self.Volts
 				AmpsPrint=self.Amps
@@ -187,7 +189,6 @@ class GUIClass(threading.Thread):
 				AmpsPrint=0
 				MaxAmpsPrint=0
 
-			PowerPrint=VoltsPrint*AmpsPrint
 			MaxPowerPrint=VoltsPrint*MaxAmpsPrint
 
 			UnitSpecificationsText=(
@@ -199,14 +200,14 @@ class GUIClass(threading.Thread):
 							'\n'
 				)
 
-			UnitSpecificationsText+=	'Sale Rate:    '
-			if self.CurrentRate>0:
-				UnitSpecificationsText+=RoundAndPadToString(self.CurrentRate,DecimalPlaces=1,LeftPad=3)+' sat/(W*hour)'
+			UnitSpecificationsText+=	'Sale Rate:   '
+			if self.RecentRate>0:
+				UnitSpecificationsText+=RoundAndPadToString(self.RecentRate*100,DecimalPlaces=0,LeftPad=5)+' sat/(100 W*hour)'
 			UnitSpecificationsText+=	'\n'
 
 			UnitSpecificationsText+=	'Payment Size: '
 			if self.RequiredPaymentAmount>0:
-				UnitSpecificationsText+=RoundAndPadToString(self.RequiredPaymentAmount,DecimalPlaces=1,LeftPad=3)+' sat'
+				UnitSpecificationsText+=RoundAndPadToString(self.RequiredPaymentAmount,DecimalPlaces=0,LeftPad=4)+' sat'
 			UnitSpecificationsText+=	'\n'
 
 			UnitSpecificationsv.set(UnitSpecificationsText)
@@ -215,18 +216,18 @@ class GUIClass(threading.Thread):
 
 
 
-			if self.ChargeStartTime !=-1 and self.Proximity is True:
-				ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=round((datetime.now()-self.ChargeStartTime).total_seconds())))	#round to the nearest second, then format as a zero padded string
+			if self.ChargeStartTime !=-1 and self.Connected is True:
+				self.ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=round((datetime.now()-self.ChargeStartTime).total_seconds())))	#round to the nearest second, then format as a zero padded string
 
 			OperatingConditionsText=(
-					'Power:            '+RoundAndPadToString(PowerPrint/1000.,DecimalPlaces=1,LeftPad=6)+' kW\n'+
-					'Current:          '+RoundAndPadToString(AmpsPrint,DecimalPlaces=1,LeftPad=6)+' Amps  RMS\n'+
-					'Line Voltage:     '+RoundAndPadToString(VoltsPrint,DecimalPlaces=1,LeftPad=6)+  ' Volts RMS\n'+
+					'Power:           '+RoundAndPadToString(self.Power/1000.,DecimalPlaces=3,LeftPad=6)+' kW\n'+
+					'Current:         '+RoundAndPadToString(AmpsPrint,DecimalPlaces=2,LeftPad=6)+'  Amps  RMS\n'+
+					'Line Voltage:    '+RoundAndPadToString(VoltsPrint,DecimalPlaces=2,LeftPad=6)+  '  Volts RMS\n'+
 					'\n'+
-					'Energy Delivered: '+RoundAndPadToString(self.EnergyDelivered,DecimalPlaces=1,LeftPad=6)+' W*hour\n'+
-					'Energy Paid For:  '+RoundAndPadToString(self.EnergyPaidFor,DecimalPlaces=1,LeftPad=6)+' W*hour\n'+
-					'Payments:         '+RoundAndPadToString(self.EnergyPaidFor*self.CurrentRate,DecimalPlaces=1,LeftPad=6)+' sat\n'+
-					'Charging Time:     '+' '+ChargeTimeText+''
+					'Energy Delivered: '+RoundAndPadToString(self.EnergyDelivered,DecimalPlaces=0,LeftPad=7)+'  W*hour\n'+
+					'Energy Cost:      '+RoundAndPadToString(self.EnergyCost,DecimalPlaces=0,LeftPad=7)+'  sat\n'+
+					'Payments:         '+RoundAndPadToString(self.EnergyPayments,DecimalPlaces=0,LeftPad=7)+'  sat\n'+
+					'Session Time:     '+' '+self.ChargeTimeText+''
 				)
 
 			OperatingConditionsv.set(OperatingConditionsText)
