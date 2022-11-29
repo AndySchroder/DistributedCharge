@@ -18,10 +18,11 @@ from gpiozero import LED
 from threading import Thread
 from yaml import safe_load
 from zmq import Context,SUB,SUBSCRIBE
-from helpers2 import RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages
+from helpers2 import RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages,irange
 from SocketHelpers import ReceiveAndUnPackTopicAndJSON
 from datetime import datetime
 from copy import copy
+from numpy import asarray,abs
 
 SetPrintWarningMessages(True)
 
@@ -59,6 +60,12 @@ HighLoadRate=ConfigFile['RateLimits']['HighLoadRate']
 #######################################################################
 # define classes and functions
 #######################################################################
+
+def FindNearestValue(TheArray, TheValue):				# inspired by https://stackoverflow.com/questions/2566412/find-nearest-value-in-numpy-array
+	TheArray = asarray(TheArray)
+	TheIndex = abs(TheArray-TheValue).argmin()		# need to use the absolute value of the difference to catch the closest value.
+	return TheArray[TheIndex]
+
 
 def ComputeAllowablePercentLoad(CurrentRate):
 	CurrentRate=min(LowLoadRate, max(HighLoadRate, CurrentRate))	#constrain the range of the rate to within the limits of where the rate is defined. anything higher than the LowLoadRate will always come out to 0 with the following LoadFraction calculation and anything lower than HighLoadRate will always be at a load fraction of 1.0
@@ -109,12 +116,13 @@ class RemoteVariableLoad(Thread):
 	Control a test variable load from 0% to 100% using stress-ng on a remote machine via SSH.
 	"""
 
-	def __init__(self,HostName,Port=None):
+	def __init__(self,HostName,Port=None,NumberOfCPUsAvailable=0):
 		super(RemoteVariableLoad, self).__init__()
 		self.daemon=True		# using daemon mode so control-C will stop the script and the threads.
 
 		self.HostName=HostName
 		self.Port=Port
+		self.NumberOfCPUsAvailable=NumberOfCPUsAvailable
 
 		self.start()			# auto start on initialization
 
@@ -129,12 +137,28 @@ class RemoteVariableLoad(Thread):
 					TimeStampedPrint('CurrentRate='+RoundAndPadToString(CurrentRate*100,0)+' sat/(100 W*hour), Setting PercentLoad to '+str(self.PercentLoad)+'% for '+self.HostName)
 					OldPercentLoad=self.PercentLoad
 
-				# - use a 10 second timeout so that the response time for changing the load can be quicker, but this results in a short period of time every 10 seconds where not at 100% load while the script is restarting stress-ng.
-				# 	also, stress-ng doesn't seem to die when disconnecting ssh with control-C, so that's another reason to have a short timeout so it will die a few moments later without manual intervention required.
-				# - use all CPUs and then tell stress-ng what percent CPU load to target for each CPU. it isn't perfectly accurate at achieving the requested load percentage, but it is common regardless of the number of
-				# 	CPUs on the remote machine and also has more granularity than putting each CPU either at 100% or 0% load, so in practicality it may be more accurate.
-				RemoteServer.run('stress-ng --cpu 0 --quiet --cpu-load '+str(self.PercentLoad)+' --timeout 10')
+				# use a 30 second timeout so that the response time for changing the load can be quicker, but this results in a short period of time every 30 seconds where not at 100% load while the script is restarting stress-ng.
+				# NOTE: used to have a 10 second timeout but decided to increase to 30 seconds because of this concern.
+				# also, stress-ng doesn't seem to die when disconnecting ssh with control-C, so that's another reason to have a short timeout so it will die a few moments later without manual intervention required.
 
+
+					if self.NumberOfCPUsAvailable>0:
+						NumberOfCPUsToUse=FindNearestValue(list(irange(0,self.NumberOfCPUsAvailable)),self.NumberOfCPUsAvailable*self.PercentLoad/100)
+						TimeStampedPrint('Using '+str(NumberOfCPUsToUse)+'/'+str(self.NumberOfCPUsAvailable)+' CPUs @ 100% instead of '+str(self.NumberOfCPUsAvailable)+'/'+str(self.NumberOfCPUsAvailable)+' CPUs @ '+str(self.PercentLoad)+'% for '+self.HostName)
+
+				if self.NumberOfCPUsAvailable>0:
+					if NumberOfCPUsToUse>0:
+						# discretely run a certain number of CPUs at 100% load. the more CPUs a machine has, the more this approximates a truely variable load. it seems that general CPUs (when using stress-ng
+						# at least) have some fluctuation in the actual power consumptions and when doing it this way, it is a little bit more stable than using the --cpu-load option as is done further
+						# below when the NumberOfCPUsToUse is not specified or is equal to 0.
+						RemoteServer.run('stress-ng --cpu '+str(NumberOfCPUsToUse)+' --quiet --timeout 40')
+					else:	# giving stress-ng a value of 0 will load all CPUs instead of 0, so need to manually catch this.
+						sleep(1)
+				else:
+					# - use all CPUs and then tell stress-ng what percent CPU load to target for each CPU. it isn't perfectly accurate at achieving the requested load percentage, but it is a common command regardless of the number of
+					# 	CPUs on the remote machine and also has more granularity than putting each CPU either at 100% or 0% load.
+
+					RemoteServer.run('stress-ng --cpu 0 --quiet --cpu-load '+str(self.PercentLoad)+' --timeout 40')
 
 
 #######################################################################
@@ -184,7 +208,13 @@ for Load in ConfigFile['RemoteVariableLoadDetails']:
 		Port=Load['Port']
 	else:
 		Port=None
-	RemoteVariableLoads.append(RemoteVariableLoad(Load['HostName'],Port))
+
+	if 'NumberOfCPUsAvailable' in Load:
+		NumberOfCPUsAvailable=Load['NumberOfCPUsAvailable']
+	else:
+		NumberOfCPUsAvailable=0
+
+	RemoteVariableLoads.append(RemoteVariableLoad(Load['HostName'],Port,NumberOfCPUsAvailable))
 
 #######################################################################
 

@@ -11,11 +11,22 @@ RateLimits :                                    # set what is considered a high 
 RemoteVariableLoadDetails :
                         -
                                 HostName                : 'load-0'
-                                
+                                NumberOfCPUsAvailable   : 8
+
                         -
                                 HostName                : 'load-1'
                                 Port                    : 22
                                 PowerConsumptionNotes   : 'This runs stress-ng on linux.'
+                                NumberOfCPUsAvailable   : 8        # ommit or set to 0 to let stress-ng throttle all CPUs together at the desired load level, otherwise individually throttle the available CPUs at 0% or 100% (but nothing in between) to approximate a variable load.
+
+                        -
+                                HostName                : 'load-2'
+                                NumberOfCPUsAvailable   : 8
+
+                        -
+                                HostName                : 'load-3'
+                                NumberOfCPUsAvailable   : 8
+
 #                        -
 #                                HostName                : 'localhost'
 #                                Port                    : 23
@@ -33,4 +44,7 @@ LocalDiscreteLoadDetails :
                                 LoadPriority            : 0.50
                                 Description             : 'Lawn Mower Battery Charger'
                                 PowerConsumptionNotes   : '~550W'
+
+
+
 
