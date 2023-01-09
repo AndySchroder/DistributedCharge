@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2022, Andy Schroder
+# Copyright (c) 2023, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -11,17 +11,23 @@
 
 
 
+from pathlib import Path
 from helpers2 import RoundAndPadToString,TimeStampedPrint,FullDateTimeString,FormatTimeDeltaToPaddedString
 from textwrap import indent
 from threading import Thread
 from SocketHelpers import PackTopicAndJSONAndSend
 from time import sleep
-from pathlib import Path
 from datetime import datetime
 
 
+
+
+TheDataFolder=str(Path.home())+'/.dc/'
+
+
+
 # open the output file --- need to fix this so that it re-opens a new file every day, but right now, it just sticks with the file created during the time it was started up.
-DataLogOutputFile = open(str(Path.home())+'/.dc/'+'DataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt', "a")
+DataLogOutputFile = open(TheDataFolder+'/'+'DataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt', "a")
 
 
 def StatusPrint(Meter,GUI,SellOfferTerms,PaymentsReceived,SalePeriods,MaxAuthorizedRateInterpolator=None):

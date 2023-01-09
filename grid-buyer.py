@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2022, Andy Schroder
+# Copyright (c) 2023, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -22,13 +22,14 @@ from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
 from GUI import GUIThread as GUI
-from common import StatusPrint,UpdateVariables
+from common import StatusPrint,UpdateVariables,TheDataFolder
+from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,FullDateTimeString,SetPrintWarningMessages
 
 from gpiozero import LED
 from collections import deque
 
-import sys,json,socket,ssl,configparser
+import sys,json,socket,ssl
 
 
 
@@ -60,42 +61,18 @@ from copy import deepcopy
 
 
 ################################################################
-# define default configuration values and then import values from config file
+# import values from config file
 ################################################################
 
+with open(TheDataFolder+'Config.yaml', 'r') as file:
+	ConfigFile=safe_load(file)
 
+# assign some shorter variable names
+LocalMeterNumber=ConfigFile['Buyer']['LocalMeterNumber']
+LocalMeterScalingFactor=ConfigFile['Buyer']['LocalMeterScalingFactor']
 
-
-TheConfigFile = configparser.ConfigParser()
-TheConfigFile.optionxform = str		# https://stackoverflow.com/questions/19359556/configparser-reads-capital-keys-and-make-them-lower-case
-
-DefaultConfig =		{
-			'Buyer': 	{
-					'LNDhost'			:	'127.0.0.1:10009',
-					'LNDnetwork'			:	'mainnet',		#'mainnet' or 'testnet'
-
-					'LocalClientIdentifier'		:	'TemporaryPasswordChangeMe',
-
-					'RS485Port'			:	'/dev/ttyAMA1',
-					'LocalMeterNumber'		:	'888888888888',
-					'LocalMeterScalingFactor'	:	1,
-
-					'RemoteMeterNumber'		:	'999999999999',
-					'RemoteHost'			:	'127.0.0.1',
-					'RemoteFingerPrintToTrust'	:	'XXX',
-
-					'PrintWarmingMessages'		:	True,
-					},
-			}
-
-TheConfigFile.read_dict(DefaultConfig)				#if the values read here aren't in the config file, they won't be overwritten when the config file is read.
-TheConfigFile.read(str(Path.home())+'/.dc/dc.config')		#warning, does not error if the file does not exist. also, .get() functions below don't error if the key doesn't exist.
-
-LocalMeterNumber=TheConfigFile.get('Buyer','LocalMeterNumber')
-LocalMeterScalingFactor=TheConfigFile.getfloat('Buyer','LocalMeterScalingFactor')
-
-SetPrintWarningMessages(TheConfigFile.getboolean('Buyer','PrintWarningMessages'))
-
+# need to use the function so that it can modify the value inside the imported module so that everything that imports TimeStampedPrint will get this value.
+SetPrintWarningMessages(ConfigFile['Buyer']['PrintWarningMessages'])
 
 ################################################################
 
@@ -180,7 +157,7 @@ def CheckSellOfferTerms(BuyOfferTerms,SellOfferTerms):
 	elif SellOfferTerms['Electrical']['Voltage']['Minimum']				<  BuyOfferTerms['Electrical']['Voltage']['MinimumAllowed']:
 		TimeStampedPrint('Min guaranteed voltage is too low')
 		return False
-	elif SellOfferTerms['MeterNumber']						!= TheConfigFile.get('Buyer','RemoteMeterNumber'):
+	elif SellOfferTerms['MeterNumber']						!= ConfigFile['Buyer']['RemoteMeterNumber']:
 		TimeStampedPrint('Not in agreement in the meter being paid')
 		return False
 	elif (SellOfferTerms['OfferStopTime'] - SellOfferTerms['OfferStartTime'])	>  BuyOfferTerms['Duration']['MaxTime']:
@@ -202,7 +179,7 @@ def CheckSellOfferTerms(BuyOfferTerms,SellOfferTerms):
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(TheConfigFile.get('Buyer','LNDhost'), network=TheConfigFile.get('Buyer','LNDnetwork'), macaroon_filepath=str(Path.home())+'/.dc/lnd/admin.macaroon',cert_filepath=str(Path.home())+'/.dc/lnd/tls.cert')
+lnd = LNDClient(ConfigFile['Buyer']['LNDhost'], network=ConfigFile['Buyer']['LNDnetwork'], macaroon_filepath=TheDataFolder+'/lnd/admin.macaroon',cert_filepath=TheDataFolder+'/lnd/tls.cert')
 
 ################################################################
 
@@ -226,7 +203,7 @@ SSLcontext.verify_mode		= ssl.CERT_NONE;
 
 
 #ekm_set_log(ekm_print_log)
-MeterPort = SerialPort(TheConfigFile.get('Buyer','RS485Port'))
+MeterPort = SerialPort(ConfigFile['Buyer']['RS485Port'])
 MeterPort.initPort()
 RawMeter = V4Meter(LocalMeterNumber)
 RawMeter.attachPort(MeterPort)
@@ -271,20 +248,20 @@ try:
 			AcceptedRate=False
 			PaymentsReceived=0
 			SalePeriods=0		# might want to use this variable instead of Meter.EnergyPayments to test for the first sale period now?
-			with socket.create_connection((TheConfigFile.get('Buyer','RemoteHost'), 4545)) as sock:
-				with SSLcontext.wrap_socket(sock, server_hostname=TheConfigFile.get('Buyer','RemoteHost')) as ssock:		#?????????? why RemoteHost needed again?????????????????
+			with socket.create_connection((ConfigFile['Buyer']['RemoteHost'], 4545)) as sock:
+				with SSLcontext.wrap_socket(sock, server_hostname=ConfigFile['Buyer']['RemoteHost']) as ssock:		#?????????? why RemoteHost needed again?????????????????
 					ServerAuthenticated=False
 					while True:
 						if not ServerAuthenticated:
 							server_cert = ssock.getpeercert(binary_form=True);
 							cert_obj = load_der_x509_certificate(server_cert,default_backend())
 							h=cert_obj.fingerprint(hashes.SHA256())
-							if TheConfigFile.get('Buyer','RemoteFingerPrintToTrust') == h.hex():
+							if ConfigFile['Buyer']['RemoteFingerPrintToTrust'] == h.hex():
 								TimeStampedPrint('server authenticated')
 
 								TimeStampedPrint(ssock.version())
 
-								SendMessage(TheConfigFile.get('Buyer','LocalClientIdentifier'),ssock)
+								SendMessage(ConfigFile['Buyer']['LocalClientIdentifier'],ssock)
 
 								# if PrintWarningMessages=True this will print the response from the server.
 								NewMessage=ReceiveMessage(ssock)

@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2022, Andy Schroder
+# Copyright (c) 2023, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -22,13 +22,14 @@ from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
 from GUI import GUIThread as GUI
-from common import StatusPrint,UpdateVariables
+from common import StatusPrint,UpdateVariables,TheDataFolder
+from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,FullDateTimeString,SetPrintWarningMessages
 
 from gpiozero import LED
 
 
-import sys,json,socket,ssl,configparser
+import sys,json,socket,ssl
 
 
 
@@ -58,38 +59,18 @@ from secrets import token_bytes
 
 
 ################################################################
-# define default configuration values and then import values from config file
+# import values from config file
 ################################################################
 
+with open(TheDataFolder+'Config.yaml', 'r') as file:
+	ConfigFile=safe_load(file)
 
+# assign some shorter variable names
+LocalMeterNumber=ConfigFile['Seller']['LocalMeterNumber']
+LocalMeterScalingFactor=ConfigFile['Seller']['LocalMeterScalingFactor']
 
-
-TheConfigFile = configparser.ConfigParser()
-TheConfigFile.optionxform = str		# https://stackoverflow.com/questions/19359556/configparser-reads-capital-keys-and-make-them-lower-case
-
-DefaultConfig =		{
-			'Seller': 	{
-
-					'LNDhost'			:	'127.0.0.1:10009',
-					'LNDnetwork'			:	'mainnet',		#'mainnet' or 'testnet'
-
-					'RemoteClientIdentifier'	:	'TemporaryPasswordChangeMe!',
-
-					'RS485Port'			:	'/dev/ttyAMA1',
-					'LocalMeterNumber'		:	'999999999999',
-					'LocalMeterScalingFactor'	:	1,
-
-					'PrintWarmingMessages'		:	True,
-					},
-			}
-
-TheConfigFile.read_dict(DefaultConfig)	#if the values read here aren't in the config file, they won't be overwritten when the config file is read.
-TheConfigFile.read(str(Path.home())+'/.dc/dc.config')		#warning, does not error if the file does not exist. also, .get() functions below don't error if the key doesn't exist.
-
-LocalMeterNumber=TheConfigFile.get('Seller','LocalMeterNumber')
-LocalMeterScalingFactor=TheConfigFile.getfloat('Seller','LocalMeterScalingFactor')
-
-SetPrintWarningMessages(TheConfigFile.getboolean('Seller','PrintWarningMessages'))
+# need to use the function so that it can modify the value inside the imported module so that everything that imports TimeStampedPrint will get this value.
+SetPrintWarningMessages(ConfigFile['Seller']['PrintWarningMessages'])
 
 ################################################################
 
@@ -158,9 +139,9 @@ TimeLastOfferSent=time()
 ################################################################
 
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_cert_chain(str(Path.home())+'/.dc/SSL/cert.pem', str(Path.home())+'/.dc/SSL/key.pem')
+context.load_cert_chain(TheDataFolder+'/SSL/cert.pem', TheDataFolder+'/SSL/key.pem')
 
-with open(str(Path.home())+'/.dc/SSL/cert.pem', "rb") as f:
+with open(TheDataFolder+'/SSL/cert.pem', "rb") as f:
 	cert_obj = load_pem_x509_certificate(f.read(),default_backend())	# can't figure out how to extract this from the context object created above, so just read it in twice. hard to follow the source code because it is a python module written in c(++?, https://raw.githubusercontent.com/python/cpython/main/Modules/_ssl.c). it seems like python doesn't have access to all variables in the module.
 h=cert_obj.fingerprint(hashes.SHA256())
 TimeStampedPrint('fingerprint client needs to trust: '+h.hex())
@@ -190,7 +171,7 @@ GUI.BigStatus='Power OFF'
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(TheConfigFile.get('Seller','LNDhost'), network=TheConfigFile.get('Seller','LNDnetwork'), macaroon_filepath=str(Path.home())+'/.dc/lnd/invoice.macaroon',cert_filepath=str(Path.home())+'/.dc/lnd/tls.cert')
+lnd = LNDClient(ConfigFile['Seller']['LNDhost'], network=ConfigFile['Seller']['LNDnetwork'], macaroon_filepath=TheDataFolder+'/lnd/invoice.macaroon',cert_filepath=TheDataFolder+'/lnd/tls.cert')
 
 ################################################################
 
@@ -204,7 +185,7 @@ lnd = LNDClient(TheConfigFile.get('Seller','LNDhost'), network=TheConfigFile.get
 
 
 #ekm_set_log(ekm_print_log)
-MeterPort = SerialPort(TheConfigFile.get('Seller','RS485Port'))
+MeterPort = SerialPort(ConfigFile['Seller']['RS485Port'])
 MeterPort.initPort()
 RawMeter = V4Meter(LocalMeterNumber)
 RawMeter.attachPort(MeterPort)
@@ -257,7 +238,7 @@ try:
 							if NewMessage == "I don't trust you.":
 								TimeStampedPrint('client thinks there is a man in the middle attack and will disconnect')
 								break
-							elif NewMessage == TheConfigFile.get('Seller','RemoteClientIdentifier'):
+							elif NewMessage == ConfigFile['Seller']['RemoteClientIdentifier']:
 								ClientAuthenticated=True
 								GUI.Connected=ClientAuthenticated
 

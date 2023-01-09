@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2022, Andy Schroder
+# Copyright (c) 2023, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -12,14 +12,13 @@
 
 
 from inotify.adapters import Inotify
-from pathlib import Path
+from common import TheDataFolder
 from yaml import safe_load
 from threading import Thread
 from time import sleep
 from hashlib import sha256
 from helpers2 import TimeStampedPrint
 
-TheDataFolder=str(Path.home())+'/.dc/'
 RateFileName='RateFile.yaml'
 
 
