@@ -22,7 +22,7 @@ from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
 from GUI import GUIThread as GUI
-from common import StatusPrint,UpdateVariables,TheDataFolder
+from common import StatusPrint,UpdateVariables,TheDataFolder,WaitForTimeSync
 from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,FullDateTimeString,SetPrintWarningMessages
 
@@ -84,6 +84,8 @@ TimeStampedPrint('configuration loaded')
 
 # launch the GUI before anything gets printed to standard output
 GUI.start()			#starts .run() (and maybe some other stuff?)
+
+WaitForTimeSync(GUI)
 
 # uncomment to add a pause if doing a screen record and need time to organize windows to the right size before anything gets printed to standard output.
 #sleep(120)

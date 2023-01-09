@@ -18,7 +18,7 @@ from threading import Thread
 from SocketHelpers import PackTopicAndJSONAndSend
 from time import sleep
 from datetime import datetime
-
+from pydbus import SystemBus
 
 
 
@@ -159,6 +159,24 @@ class UpdateVariables(Thread):
 						LoopCounter=0
 
 			sleep(SleepTime)
+
+
+
+
+
+def WaitForTimeSync(GUI):
+	GUI.BigStatus='Clock Not Set'
+	DetailedMessage='Waiting for clock to be synchronized with NTP server.'
+	GUI.SmallStatus=DetailedMessage
+	TimeStampedPrint(DetailedMessage)
+
+	while not SystemBus().get(".timedate1").NTPSynchronized:
+		sleep(0.1)
+
+	GUI.BigStatus='Clock Set'
+	DetailedMessage='Clock is now synchronized with NTP server.'
+	GUI.SmallStatus=DetailedMessage
+	TimeStampedPrint(DetailedMessage)
 
 
 
