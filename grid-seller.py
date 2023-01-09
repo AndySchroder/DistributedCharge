@@ -22,7 +22,7 @@ from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
 from GUI import GUIThread as GUI
-from common import StatusPrint,UpdateVariables,TheDataFolder,WaitForTimeSync
+from common import StatusPrint,UpdateVariables,TheDataFolder,WaitForTimeSync,TimeStampedPrintAndSmallStatusUpdate
 from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,FullDateTimeString,SetPrintWarningMessages
 
@@ -211,12 +211,14 @@ try:
 	with socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0) as sock:
 		sock.bind(('0.0.0.0', 4545))
 		sock.listen(5)		# TODO: figure out why this is needed.
+		TimeStampedPrintAndSmallStatusUpdate('Waiting for buyer to establish communication link.',GUI)
 		with context.wrap_socket(sock, server_side=True) as ssock:
 			ClientAuthenticated=False
 			conn, addr = ssock.accept()
 			server_cert = conn.getpeercert(binary_form=True);
 
 			with conn:
+				TimeStampedPrintAndSmallStatusUpdate('Communication link established.',GUI)
 				TimeStampedPrint(f"Connected by {addr}")
 
 				InitialInvoice=True
@@ -245,6 +247,7 @@ try:
 								GUI.Connected=ClientAuthenticated
 
 								SendMessage('client is allowed to connect',conn)
+								TimeStampedPrintAndSmallStatusUpdate('Buyer Authenticated',GUI)
 							else:
 								SendMessage('Client Identifier not allowed, disconnecting',conn)
 								break

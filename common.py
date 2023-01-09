@@ -162,21 +162,24 @@ class UpdateVariables(Thread):
 
 
 
+def TimeStampedPrintAndSmallStatusUpdate(Message,GUI):
+	GUI.SmallStatus=Message
+	TimeStampedPrint(Message)
 
 
 def WaitForTimeSync(GUI):
 	GUI.BigStatus='Clock Not Set'
-	DetailedMessage='Waiting for clock to be synchronized with NTP server.'
-	GUI.SmallStatus=DetailedMessage
-	TimeStampedPrint(DetailedMessage)
+	TimeStampedPrintAndSmallStatusUpdate('Waiting for clock to be synchronized with NTP server.',GUI)
 
 	while not SystemBus().get(".timedate1").NTPSynchronized:
 		sleep(0.1)
 
 	GUI.BigStatus='Clock Set'
-	DetailedMessage='Clock is now synchronized with NTP server.'
-	GUI.SmallStatus=DetailedMessage
-	TimeStampedPrint(DetailedMessage)
+	TimeStampedPrintAndSmallStatusUpdate('Clock is now synchronized with NTP server.',GUI)
+
+
+
+
 
 
 

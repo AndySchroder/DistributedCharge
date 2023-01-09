@@ -22,7 +22,7 @@ from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
 from GUI import GUIThread as GUI
-from common import StatusPrint,UpdateVariables,TheDataFolder,WaitForTimeSync
+from common import StatusPrint,UpdateVariables,TheDataFolder,WaitForTimeSync,TimeStampedPrintAndSmallStatusUpdate
 from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,FullDateTimeString,SetPrintWarningMessages
 
@@ -250,16 +250,19 @@ try:
 			AcceptedRate=False
 			PaymentsReceived=0
 			SalePeriods=0		# might want to use this variable instead of Meter.EnergyPayments to test for the first sale period now?
+			TimeStampedPrintAndSmallStatusUpdate('Trying to establish communication link.',GUI)
 			with socket.create_connection((ConfigFile['Buyer']['RemoteHost'], 4545)) as sock:
 				with SSLcontext.wrap_socket(sock, server_hostname=ConfigFile['Buyer']['RemoteHost']) as ssock:		#?????????? why RemoteHost needed again?????????????????
 					ServerAuthenticated=False
+					TimeStampedPrintAndSmallStatusUpdate('Communication link established.',GUI)
 					while True:
 						if not ServerAuthenticated:
 							server_cert = ssock.getpeercert(binary_form=True);
 							cert_obj = load_der_x509_certificate(server_cert,default_backend())
 							h=cert_obj.fingerprint(hashes.SHA256())
 							if ConfigFile['Buyer']['RemoteFingerPrintToTrust'] == h.hex():
-								TimeStampedPrint('server authenticated')
+
+								TimeStampedPrintAndSmallStatusUpdate('Seller Authenticated',GUI)
 
 								TimeStampedPrint(ssock.version())
 
@@ -277,7 +280,7 @@ try:
 								# TODO: after authenticating, might want to allow the buyer request their current and energy demands first, then get a bid from the seller.
 
 							else:
-								TimeStampedPrint('server did not authenticate properly')
+								TimeStampedPrintAndSmallStatusUpdate('Seller did not authenticate properly.',GUI)
 								SendMessage("I don't trust you.",ssock)
 								break
 
