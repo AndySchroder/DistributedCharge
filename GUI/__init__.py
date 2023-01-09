@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2022, Andy Schroder
+# Copyright (c) 2023, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -202,7 +202,7 @@ class GUIClass(threading.Thread):
 
 			UnitSpecificationsText+=	'Sale Rate:   '
 			if self.RecentRate>0:
-				UnitSpecificationsText+=RoundAndPadToString(self.RecentRate*100,DecimalPlaces=0,LeftPad=5)+' sat/(100 W*hour)'
+				UnitSpecificationsText+=RoundAndPadToString(self.RecentRate*1000,DecimalPlaces=0,LeftPad=5)+' sat/(kW*hour)'
 			UnitSpecificationsText+=	'\n'
 
 			UnitSpecificationsText+=	'Payment Size: '

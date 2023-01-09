@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2022, Andy Schroder
+# Copyright (c) 2023, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -99,11 +99,11 @@ class LocalDiscreteLoad(Thread):
 
 			if CurrentRate>PowerOffRate:
 				if self.Contactor.is_lit:
-					TimeStampedPrint('CurrentRate='+RoundAndPadToString(CurrentRate*100,0)+' sat/(100 W*hour), Turning Off '+self.Load['Description'])
+					TimeStampedPrint('CurrentRate='+RoundAndPadToString(CurrentRate*1000,0)+' sat/(kW*hour), Turning Off '+self.Load['Description'])
 					self.Contactor.off()
 			elif CurrentRate/PowerOffRate<(1.00-0.10):			#TODO: change this dead band to be relative to (LowLoadRate-HighLoadRate) or (CurrentRate-HighLoadRate)/(PowerOffRate-HighLoadRate)??????????????????
 				if not self.Contactor.is_lit:
-					TimeStampedPrint('CurrentRate='+RoundAndPadToString(CurrentRate*100,0)+' sat/(100 W*hour), Turning On '+self.Load['Description'])
+					TimeStampedPrint('CurrentRate='+RoundAndPadToString(CurrentRate*1000,0)+' sat/(kW*hour), Turning On '+self.Load['Description'])
 					self.Contactor.on()
 			else:
 				# CurrentRate is less than the PowerOffRate but not yet below the 10% dead band.
@@ -134,7 +134,7 @@ class RemoteVariableLoad(Thread):
 				self.PercentLoad=ComputeAllowablePercentLoad(CurrentRate)
 
 				if OldPercentLoad!=self.PercentLoad:
-					TimeStampedPrint('CurrentRate='+RoundAndPadToString(CurrentRate*100,0)+' sat/(100 W*hour), Setting PercentLoad to '+str(self.PercentLoad)+'% for '+self.HostName)
+					TimeStampedPrint('CurrentRate='+RoundAndPadToString(CurrentRate*1000,0)+' sat/(kW*hour), Setting PercentLoad to '+str(self.PercentLoad)+'% for '+self.HostName)
 					OldPercentLoad=self.PercentLoad
 
 				# use a 30 second timeout so that the response time for changing the load can be quicker, but this results in a short period of time every 30 seconds where not at 100% load while the script is restarting stress-ng.
@@ -242,7 +242,7 @@ while True:
 	_,CurrentRate=ReceiveAndUnPackTopicAndJSON(socket)	# TODO: more sanity checks on the received rate (like is it less than 0 or ultra big or anything weird).
 
 	if round(CurrentRate,2)!=round(OldRate,2):		#don't notify of small changes even though the rest of the script considers them (except ComputeAllowablePercentLoad)
-		TimeStampedPrint('New rate of '+RoundAndPadToString(CurrentRate*100,0)+' sat/(100 W*hour) received')
+		TimeStampedPrint('New rate of '+RoundAndPadToString(CurrentRate*1000,0)+' sat/(kW*hour) received')
 
 	OldRate=CurrentRate
 

@@ -45,9 +45,9 @@ def StatusPrint(Meter,GUI,SellOfferTerms,PaymentsReceived,SalePeriods,MaxAuthori
 	StatusMessage += 'Energy Received: '+ RoundAndPadToString(Meter.EnergyDelivered,0)+' W*hours,   '
 	StatusMessage += 'Energy Cost: '+RoundAndPadToString(Meter.EnergyCost,0)+' sats'
 	StatusMessage += '\n'
-	StatusMessage += 'Required Rate: '+RoundAndPadToString(Meter.RecentRate*100,0)+' sat/(100 W*hour),   '
+	StatusMessage += 'Required Rate: '+RoundAndPadToString(Meter.RecentRate*1000,0)+' sat/(kW*hour),   '
 	if MaxAuthorizedRateInterpolator is not None:
-		StatusMessage += 'Max Authorized Rate: '+RoundAndPadToString(MaxAuthorizedRateInterpolator(CurrentTime.timestamp())*100,0)+' sat/(100 W*hour)'
+		StatusMessage += 'Max Authorized Rate: '+RoundAndPadToString(MaxAuthorizedRateInterpolator(CurrentTime.timestamp())*1000,0)+' sat/(kW*hour)'
 	StatusMessage += '\n'
 	StatusMessage += 'Sale Period: ['
 	StatusMessage += FullDateTimeString(SellOfferTerms['OfferStartTime'])+' <~~> '
@@ -153,7 +153,7 @@ class UpdateVariables(Thread):
 						# publish the rate via zmq so local devices can adjust their loads intelligently
 						# continuously send because new clients can connect at any time and they won't know the current rate and don't want them to have to wait a while.
 						PackTopicAndJSONAndSend(self.ZMQSocket,'Rate',self.Meter.RecentRate)		#note: using send_json even though just using a float because want to prepare for more complex messages
-						TimeStampedPrint('Published a rate of '+RoundAndPadToString(self.Meter.RecentRate*100,0)+' sat/(100 W*hour) to ZMQ subscribers')
+						TimeStampedPrint('Published a rate of '+RoundAndPadToString(self.Meter.RecentRate*1000,0)+' sat/(kW*hour) to ZMQ subscribers')
 					else:
 						# don't wait, send the rate once it's been initialized
 						LoopCounter=0
