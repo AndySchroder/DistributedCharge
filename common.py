@@ -12,7 +12,9 @@
 
 
 from pathlib import Path
-from helpers2 import RoundAndPadToString,TimeStampedPrint,FullDateTimeString,FormatTimeDeltaToPaddedString
+from os import makedirs,environ
+from os.path import isfile,isdir
+from helpers2 import RoundAndPadToString,TimeStampedPrint,FullDateTimeString,FormatTimeDeltaToPaddedString,SetPrintWarningMessages
 from textwrap import indent
 from threading import Thread
 from SocketHelpers import PackTopicAndJSONAndSend
@@ -22,12 +24,89 @@ from pydbus import SystemBus
 
 
 
-TheDataFolder=str(Path.home())+'/.dc/'
+
+def EnvironmentPopulated(VariableName):
+	return ((VariableName in environ) and (environ.get(VariableName) != None) and (environ.get(VariableName) != ''))
+
+def MakeFolderIfItDoesNotExist(Folder):
+	if not isdir(Folder):
+		TimeStampedPrint(Folder+' does not exist, so creating it')
+		makedirs(Folder)
 
 
+################################################################
+# adjust directory paths from the defaults if they have been defined by an environmental variable
+################################################################
+
+SetPrintWarningMessages(True)		# always print what is going on with the directories
+
+if EnvironmentPopulated('DC_DATADIR'):
+	TheDataFolder=environ.get('DC_DATADIR')
+else:
+	TheDataFolder=str(Path.home())+'/.dc/'
+TimeStampedPrint('DataFolder set to '+TheDataFolder)
+MakeFolderIfItDoesNotExist(TheDataFolder)
+
+
+if EnvironmentPopulated('DC_DATAARCHIVEDIR'):
+	TheDataArchiveFolder=environ.get('DC_DATAARCHIVEDIR')
+else:
+	TheDataArchiveFolder=TheDataFolder+'/DataArchive/'
+TimeStampedPrint('DataArchiveFolder set to '+TheDataArchiveFolder)
+MakeFolderIfItDoesNotExist(TheDataArchiveFolder)
+
+################################################################
+
+
+
+
+################################################################
+# prepare to write the DataLogFile
+################################################################
+
+# TODO: restructure this section. this is run by every script that imports this module (such as SmartLoads.py) even when it isn't needed.
+# it doesn't really hurt much to do it in every script since all it is doing is opening the file and writing the header row
+# but that's a bit sloppy to have a different process write the header file and then leave the file open for writing for no reason.
+
+TheDataLogFolder=TheDataArchiveFolder#+'/DataLog/'
+MakeFolderIfItDoesNotExist(TheDataLogFolder)
 
 # open the output file --- need to fix this so that it re-opens a new file every day, but right now, it just sticks with the file created during the time it was started up.
-DataLogOutputFile = open(TheDataFolder+'/'+'DataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt', "a")
+#DataLogFile='DataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt'
+DataLogFile='DataLog'+'.txt'
+
+ColumnHeaders  = ''
+if not isfile(TheDataLogFolder+DataLogFile):
+	ColumnHeaders += 'UnixTime'				+ '\t'
+	ColumnHeaders += 'DateTime'				+ '\t'
+	ColumnHeaders += 'SessionTime'				+ '\t'
+	ColumnHeaders += 'SalePeriodTimeRemaining[sec]'		+ '\t'
+	ColumnHeaders += 'SalePeriodNumber'			+ '\t'
+	ColumnHeaders += 'Power[W]'				+ '\t'
+	ColumnHeaders += 'Volts'				+ '\t'
+	ColumnHeaders += 'Amps'					+ '\t'
+	ColumnHeaders += 'EnergyDelivered[Wh]'			+ '\t'
+	ColumnHeaders += 'Rate[sat/Wh]'				+ '\t'
+	ColumnHeaders += 'MaxAuthorizedRate[sat/Wh]'		+ '\t'
+	ColumnHeaders += 'EnergyCost[sat]'			+ '\t'
+	ColumnHeaders += 'TotalPaymentAmount[sat]'		+ '\t'
+	ColumnHeaders += 'TotalNumberOfPayments'		+ '\t'
+	ColumnHeaders += '\n'
+
+DataLogFileHandle = open(TheDataLogFolder+DataLogFile, "a")
+
+DataLogFileHandle.write(ColumnHeaders)		#if file already existed, ColumnHeaders will be empty, so nothing will be written.
+DataLogFileHandle.flush()
+
+SetPrintWarningMessages(False)		# return to the default
+
+################################################################
+
+
+
+
+
+
 
 
 def StatusPrint(Meter,GUI,SellOfferTerms,PaymentsReceived,SalePeriods,MaxAuthorizedRateInterpolator=None):
@@ -89,12 +168,12 @@ def StatusPrint(Meter,GUI,SellOfferTerms,PaymentsReceived,SalePeriods,MaxAuthori
 	else:
 		DataString += RoundAndPadToString(-1,4)								+ '\t'		# N/A for the seller
 
-	DataString += RoundAndPadToString(Meter.EnergyCost,0)							+ '\t'		# EnergyCost
-	DataString += RoundAndPadToString(Meter.EnergyPayments,0)						+ '\t'		# Total Payment Amount [sats]
+	DataString += RoundAndPadToString(Meter.EnergyCost,0)							+ '\t'		# EnergyCost [sat]
+	DataString += RoundAndPadToString(Meter.EnergyPayments,0)						+ '\t'		# Total Payment Amount [sat]
 	DataString += RoundAndPadToString(PaymentsReceived,0)							+ '\t'		# Total Number of Payments
 
-	DataLogOutputFile.write(DataString+'\n')
-	DataLogOutputFile.flush()		# skip this by changing the buffer mode of the open function?
+	DataLogFileHandle.write(DataString+'\n')
+	DataLogFileHandle.flush()		# skip this by changing the buffer mode of the open function?
 
 	# where/when to close this file handle ?????
 

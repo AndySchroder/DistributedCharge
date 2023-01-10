@@ -9,6 +9,10 @@
 ###############################################################################
 
 
+print('')
+print('')
+print('')
+print('')
 
 
 ################################################################
@@ -75,8 +79,6 @@ SetPrintWarningMessages(ConfigFile['Seller']['PrintWarningMessages'])
 ################################################################
 
 
-print('')
-print('')
 TimeStampedPrint('startup!')			#needs to be after loading configuration since TimeStampedPrint needs to know the value of PrintWarningMessages
 TimeStampedPrint('configuration loaded')
 

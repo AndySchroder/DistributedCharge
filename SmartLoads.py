@@ -9,13 +9,22 @@
 ###############################################################################
 
 
+print('')
+print('')
+print('')
+print('')
 
+
+################################################################
+# import modules
+################################################################
 
 from pathlib import Path
 from fabric import Connection
 from time import sleep
 from gpiozero import LED
 from threading import Thread
+from common import TheDataFolder,TheDataArchiveFolder,MakeFolderIfItDoesNotExist
 from yaml import safe_load
 from zmq import Context,SUB,SUBSCRIBE
 from helpers2 import RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages,irange
@@ -24,11 +33,12 @@ from datetime import datetime
 from copy import copy
 from numpy import asarray,abs
 
+
+################################################################
+
 SetPrintWarningMessages(True)
 
 
-print('')
-print('')
 TimeStampedPrint('startup!')
 
 
@@ -41,7 +51,6 @@ TimeStampedPrint('startup!')
 # read in config file
 #######################################################################
 
-TheDataFolder=str(Path.home())+'/.dc/'
 ConfigFileName='SmartLoads.yaml'
 
 with open(TheDataFolder+ConfigFileName, 'r') as file:
@@ -223,9 +232,18 @@ for Load in ConfigFile['RemoteVariableLoadDetails']:
 
 
 
+
+TheDiscreteSmartLoadDataLogFolder=TheDataArchiveFolder+'/DiscreteSmartLoadDataLog/'
+TimeStampedPrint('DiscreteSmartLoadDataLogFolder set to '+TheDiscreteSmartLoadDataLogFolder)
+MakeFolderIfItDoesNotExist(TheDiscreteSmartLoadDataLogFolder)
+
+TheVariableSmartLoadDataLogFolder=TheDataArchiveFolder+'/VariableSmartLoadDataLog/'
+TimeStampedPrint('VariableSmartLoadDataLogFolder set to '+TheVariableSmartLoadDataLogFolder)
+MakeFolderIfItDoesNotExist(TheVariableSmartLoadDataLogFolder)
+
 # open the output files --- need to fix this so that it re-opens a new file every day, but right now, it just sticks with the file created during the time it was started up.
-DiscreteSmartLoadDataLogOutputFile = open(str(Path.home())+'/.dc/'+'DiscreteSmartLoadDataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt', "a")
-VariableSmartLoadDataLogOutputFile = open(str(Path.home())+'/.dc/'+'VariableSmartLoadDataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt', "a")
+DiscreteSmartLoadDataLogOutputFile = open(TheDiscreteSmartLoadDataLogFolder+'DiscreteSmartLoadDataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt', "a")
+VariableSmartLoadDataLogOutputFile = open(TheVariableSmartLoadDataLogFolder+'VariableSmartLoadDataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt', "a")
 
 
 
