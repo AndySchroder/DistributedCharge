@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2022, Andy Schroder
+#Copyright (c) 2023, Andy Schroder
 #See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -19,12 +19,20 @@ from time import sleep,time
 from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
+from urllib.parse import urlparse,parse_qs
+from base64 import urlsafe_b64decode
+from cryptography.hazmat.backends import default_backend
+from cryptography.x509 import load_der_x509_certificate
+from cryptography.hazmat.primitives import serialization
+
 from m3 import m3, getCANvalue
 from GUI import GUIThread as GUI
+from common import TheDataFolder,WaitForTimeSync
+from yaml import safe_load
+from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages
 from gpiozero import LED
 
-
-import can,isotp,helpers2,sys,mcp3008
+import can,isotp,sys,mcp3008
 
 from pathlib import Path
 
@@ -38,43 +46,73 @@ import TWCManager
 
 Message=can.Message
 
-FormatTimeDeltaToPaddedString=helpers2.FormatTimeDeltaToPaddedString
-RoundAndPadToString=helpers2.RoundAndPadToString
-TimeStampedPrint=helpers2.TimeStampedPrint
+################################################################
+
+
+
+
 
 
 ################################################################
+# import values from config file
+################################################################
+
+with open(TheDataFolder+'Config.yaml', 'r') as file:
+	ConfigFile=safe_load(file)
+
+
+# need to use the function so that it can modify the value inside the imported module so that everything that imports TimeStampedPrint will get this value.
+SetPrintWarningMessages(ConfigFile['Seller']['PrintWarningMessages'])
+
+################################################################
+
+
+
+
+
+
+
+
+
+
+print('')
+print('')
+TimeStampedPrint('startup!')			#needs to be after loading configuration since TimeStampedPrint needs to know the value of PrintWarningMessages
+TimeStampedPrint('configuration loaded')
+
+################################################################
+
+# launch the GUI before anything gets printed to standard output
+GUI.start()			#starts .run() (and maybe some other stuff?)
+
+WaitForTimeSync(GUI)
+
+# uncomment to add a pause if doing a screen record and need time to organize windows to the right size before anything gets printed to standard output.
+#sleep(120)
+
+################################################################
+
+
+
+
+
+
 
 
 ################################################################
 #define configuration related constants
 ################################################################
 
-helpers2.PrintWarningMessages=True
-
-print('')
-print('')
-TimeStampedPrint('startup!')
-
-SWCANname='can0'						#name of the interface for the single wire can bus, the charge port can bus.
-
-
-
-
-
-LNDhost="127.0.0.1:10009"
-LNDnetwork='mainnet'						#'mainnet' or 'testnet'
 
 ProximityVoltage=1.5						#Voltage that indicates charge cable has been plugged in
-ProximityVoltageTolerance=0.05*2
+ProximityVoltageTolerance=0.05*2*2.5		#need the extra *2.5 for 208V power? was getting 1.289V every once and a while and not sure why! so, it was disconnecting and screwing everything up.
 
 
 CurrentRate=1							#sat/(W*hour)
 WhoursPerPayment=int(25)					#W*hour/payment
 RequiredPaymentAmount=int(WhoursPerPayment*CurrentRate)		#sat/payment
-MaxAmps=6       #5 doesn't seem to work (the car just reverts to 6 but the Distributed Charge display still says 5), but if 6 is used, can manually drop to 5 on the car screen. don't want to go between 7 and 18 amps because it tries to do the "spike amps", and this also includes manually overriding on the car screen.
-
-
+#MaxAmps=6       #5 doesn't seem to work (the car just reverts to 6 but the Distributed Charge display still says 5), but if 6 is used, can manually drop to 5 on the car screen. don't want to go between 7 and 18 amps because it tries to do the "spike amps", and this also includes manually overriding on the car screen.
+MaxAmps=20
 
 
 ################################################################
@@ -98,6 +136,7 @@ ProximityLostTime=0
 
 Volts=None
 Amps= None
+Power=0
 
 TimeLastOfferSent=time()
 
@@ -153,7 +192,41 @@ SWCAN_Relay.off()
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(LNDhost, network=LNDnetwork, macaroon_filepath=str(Path.home())+'/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon')
+if ConfigFile['Seller']['LNDhost'].startswith('lndconnect://'):
+
+	ParsedLNDConnect=urlparse(ConfigFile['Seller']['LNDhost'])
+	ParsedLNDConnectQuery=parse_qs(ParsedLNDConnect.query)
+
+	# note, below .hex() is used because that is what is expected by grpc. didn't want to do it here because want to have the tests of the raw file possible.
+	# not sure why GRPC doesn't send binary down the wire? or, maybe it does but whatever function deals with the macaroon first wants it in hex format for some reason.
+	Macaroon=urlsafe_b64decode(ParsedLNDConnectQuery['macaroon'][0])
+
+	# probably more complicated than just doing a simple encoding conversion but couldn't find any simple example or module to do that.
+	# since the PEM data with the header and footer removed and then decoded is just DER data, read that in
+	ProcessedCertificate=load_der_x509_certificate(urlsafe_b64decode(ParsedLNDConnectQuery['cert'][0]),default_backend())
+
+	# then export it back out using normal PEM format, which is what GRPC is expecting.
+	# note, this is bytes object and not a string, so would need to use .decode('utf8') on it in order to convert it to a string and make the line breaks do something and not just show up as a \n when printing
+	CertificatePEM=ProcessedCertificate.public_bytes(encoding=serialization.Encoding.PEM)
+
+	if True:	#check vs the original file to make sure lndconnect decoding is working
+		with open(str(Path.home())+'/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon', 'rb') as f:
+			macaroon_file_bytes = f.read()
+		print(Macaroon)
+		print(macaroon_file_bytes)
+		print(Macaroon==macaroon_file_bytes)
+
+		with open(str(Path.home())+'/.lnd/tls.cert', 'rb') as f:
+			cert_file = f.read()
+		print(CertificatePEM)
+		print(cert_file)
+		print(cert_file==CertificatePEM)
+
+	lnd = LNDClient(ParsedLNDConnect.netloc, macaroon=Macaroon.hex(), cert=CertificatePEM)
+
+else:
+	lnd = LNDClient(ConfigFile['Seller']['LNDhost'], macaroon_filepath=str(Path.home())+'/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon')
+
 
 ################################################################
 
@@ -163,7 +236,7 @@ lnd = LNDClient(LNDhost, network=LNDnetwork, macaroon_filepath=str(Path.home())+
 #initialize the CAN bus
 ################################################################
 
-SWCAN = can.interface.Bus(channel=SWCANname, bustype='socketcan',can_filters=[	#only pickup IDs of interest so don't waste time processing tons of unused data
+SWCAN = can.interface.Bus(channel=ConfigFile['Seller']['SWCANname'], bustype='socketcan',can_filters=[	#only pickup IDs of interest so don't waste time processing tons of unused data
 										{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
 										{"can_id": 1998, "can_mask": 0x7ff, "extended": False},		#wall offer
 										{"can_id": 1999, "can_mask": 0x7ff, "extended": False},		#car acceptance of offer
@@ -186,7 +259,7 @@ SWCAN = can.interface.Bus(channel=SWCANname, bustype='socketcan',can_filters=[	#
 
 SWCAN_ISOTP = isotp.socket()				#default recv timeout is 0.1 seconds
 SWCAN_ISOTP.set_fc_opts(stmin=25, bs=10)		#see https://can-isotp.readthedocs.io/en/latest/isotp/socket.html#socket.set_fc_opts
-SWCAN_ISOTP.bind(SWCANname, isotp.Address(rxid=1996, txid=1997))		#note: rxid of wall is txid of car, and txid of wall is rxid of the car
+SWCAN_ISOTP.bind(ConfigFile['Seller']['SWCANname'], isotp.Address(rxid=1996, txid=1997))		#note: rxid of wall is txid of car, and txid of wall is rxid of the car
 
 
 
@@ -215,11 +288,7 @@ SWCAN_ISOTP.bind(SWCANname, isotp.Address(rxid=1996, txid=1997))		#note: rxid of
 
 
 
-################################################################
 
-GUI.start()			#starts .run() (and maybe some other stuff?)
-
-################################################################
 
 
 
@@ -257,14 +326,16 @@ try:
 		#pass values to the GUI
 		GUI.Volts=Volts
 		GUI.Amps=Amps
+		GUI.Power=Power
 		GUI.BigStatus=BigStatus
 		GUI.SmallStatus=SmallStatus
 		GUI.EnergyDelivered=EnergyDelivered
-		GUI.EnergyPaidFor=EnergyPaidFor
-		GUI.CurrentRate=CurrentRate
+		GUI.EnergyPayments=EnergyPaidFor*CurrentRate
+		GUI.EnergyCost=EnergyDelivered*CurrentRate
+		GUI.RecentRate=CurrentRate
 		GUI.RequiredPaymentAmount=RequiredPaymentAmount
 		GUI.ChargeStartTime=ChargeStartTime
-		GUI.Proximity=Proximity
+		GUI.Connected=Proximity
 		GUI.MaxAmps=MaxAmps
 
 
@@ -344,6 +415,7 @@ try:
 			#reset the values of current and voltage....actually, may not be needed here anymore ? need to remove and test.
 			Volts	=	None
 			Amps	=	None
+			Power	=	0
 
 			SWCAN_Relay.off()
 
@@ -376,7 +448,8 @@ try:
 					CurrentTime=time()
 					deltaT=(CurrentTime-PreviousTime)/3600		#hours, small error on first loop when SWCANActive is initially True
 
-					EnergyDelivered+=deltaT*Volts*Amps		#W*hours
+					Power=Volts*Amps
+					EnergyDelivered+=deltaT*Power		#W*hours
 
 
 				if OfferAccepted:
@@ -389,7 +462,10 @@ try:
 								OutstandingInvoiceStatus=lnd.lookup_invoice(OutstandingInvoice.r_hash)
 								TimeStampedPrint("checked the current invoice's payment status")
 								if OutstandingInvoiceStatus.settled:
+
+									# TODO as noted below, need rework this to be in sat not W*hour
 									EnergyPaidFor+=OutstandingInvoiceStatus.value/(CurrentRate)		#W*hours
+
 									PendingInvoice=False
 									InitialInvoice=False							#reset every time just to make the logic simpler
 
@@ -414,6 +490,9 @@ try:
 						#note, because below 1% error is allowed, this test may actually not have much meaning considering over the course of a charging cycle
 						#the total error may be larger than an individual payment amount, so EnergyPaidFor-EnergyDelivered is likely less than 0 and therefor
 						#a new invoice will just be sent right after the previous invoice was paid, rather than waiting.
+						# TODO: rework this. it is in terms of W*hour on the left and sat on the right. this is wrong but the rate is currently 1 sat/(W*hour), so it works out.
+						# in the future with variable rates like GRID, will not be able to have a known energy amount that has been prepaid for, instead need to just have a fixed
+						# prepayment amount in sat.
 						if ((EnergyPaidFor-EnergyDelivered)<RequiredPaymentAmount*2*0.90) and not PendingInvoice:
 							RequiredPaymentAmount=WhoursPerPayment*CurrentRate				#sat
 

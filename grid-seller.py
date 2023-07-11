@@ -175,7 +175,7 @@ GUI.BigStatus='Power OFF'
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(ConfigFile['Seller']['LNDhost'], network=ConfigFile['Seller']['LNDnetwork'], macaroon_filepath=TheDataFolder+'/lnd/invoice.macaroon',cert_filepath=TheDataFolder+'/lnd/tls.cert')
+lnd = LNDClient(ConfigFile['Seller']['LNDhost'], macaroon_filepath=TheDataFolder+'/lnd/invoice.macaroon',cert_filepath=TheDataFolder+'/lnd/tls.cert')
 
 ################################################################
 

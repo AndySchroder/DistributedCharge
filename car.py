@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2022, Andy Schroder
+#Copyright (c) 2023, Andy Schroder
 #See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -21,10 +21,18 @@ from datetime import datetime,timedelta
 from lndgrpc import LNDClient
 from m3 import m3, getCANvalue
 from GUI import GUIThread as GUI
+from common import TheDataFolder,WaitForTimeSync
+from yaml import safe_load
+from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages
 from gpiozero import LED
 from collections import deque
 
 import can,isotp,helpers2,threading,sys,mcp3008
+
+
+
+
+
 
 
 
@@ -38,35 +46,62 @@ import can,isotp,helpers2,threading,sys,mcp3008
 
 Message=can.Message
 
-FormatTimeDeltaToPaddedString=helpers2.FormatTimeDeltaToPaddedString
-RoundAndPadToString=helpers2.RoundAndPadToString
-TimeStampedPrint=helpers2.TimeStampedPrint
+
+################################################################
+
+
+
 
 
 ################################################################
+# import values from config file
+################################################################
+
+with open(TheDataFolder+'Config.yaml', 'r') as file:
+	ConfigFile=safe_load(file)
+
+
+# need to use the function so that it can modify the value inside the imported module so that everything that imports TimeStampedPrint will get this value.
+SetPrintWarningMessages(ConfigFile['Buyer']['PrintWarningMessages'])
+
+################################################################
+
+
+
+
+
+
+
+
+
+
+print('')
+print('')
+TimeStampedPrint('startup!')			#needs to be after loading configuration since TimeStampedPrint needs to know the value of PrintWarningMessages
+TimeStampedPrint('configuration loaded')
+
+################################################################
+
+# launch the GUI before anything gets printed to standard output
+GUI.start()			#starts .run() (and maybe some other stuff?)
+
+WaitForTimeSync(GUI)
+
+# uncomment to add a pause if doing a screen record and need time to organize windows to the right size before anything gets printed to standard output.
+#sleep(120)
+
+################################################################
+
+
+
+
+
+
 
 
 ################################################################
 #define configuration related constants
 ################################################################
-
-helpers2.PrintWarningMessages=True
-
-print('')
-print('')
-TimeStampedPrint('startup!')
-
-SWCANname='can0'						#name of the interface for the single wire can bus, the charge port can bus.
-TWCANname='can1'						#name of the interface for the two wire can bus (standard can)
-
-
-
-
-LNDhost="127.0.0.1:10009"
-LNDnetwork='mainnet'						#'mainnet' or 'testnet'
-
-
-
 
 
 MaxRate=1.5			#sat/(W*hour)
@@ -84,7 +119,9 @@ MaxRequiredPaymentAmount=41	#sat
 #initialize variables
 ################################################################
 
+AC_CHARGE_ENABLED=False
 SWCANActive=False
+SWCANConnected=False
 Proximity=False
 
 
@@ -93,7 +130,8 @@ TotalWhoursCharged=-1
 
 Volts=None
 Amps=None
-MaxAmps=None
+MaxAmps=0
+Power=0
 
 ChargeStartTime=-1
 CurrentRate=0
@@ -148,7 +186,7 @@ SWCAN_Relay.off()
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(LNDhost, network=LNDnetwork, admin=True)
+lnd = LNDClient(ConfigFile['Buyer']['LNDhost'], admin=True)
 
 ################################################################
 
@@ -158,7 +196,7 @@ lnd = LNDClient(LNDhost, network=LNDnetwork, admin=True)
 #initialize the CAN bus
 ################################################################
 
-SWCAN = can.interface.Bus(channel=SWCANname, bustype='socketcan',can_filters=[	#only pickup IDs of interest so don't waste time processing tons of unused data
+SWCAN = can.interface.Bus(channel=ConfigFile['Buyer']['SWCANname'], bustype='socketcan',can_filters=[	#only pickup IDs of interest so don't waste time processing tons of unused data
 										{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
 										{"can_id": 1998, "can_mask": 0x7ff, "extended": False},		#wall offer
 										{"can_id": 1999, "can_mask": 0x7ff, "extended": False},		#car acceptance of offer
@@ -168,7 +206,7 @@ SWCAN = can.interface.Bus(channel=SWCANname, bustype='socketcan',can_filters=[	#
 
 
 
-TWCAN = can.interface.Bus(channel=TWCANname, bustype='socketcan',can_filters=[
+TWCAN = can.interface.Bus(channel=ConfigFile['Buyer']['TWCANname'], bustype='socketcan',can_filters=[
 										{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
 										{"can_id": 1990, "can_mask": 0x7ff, "extended": False},
 										{"can_id": m3.get_message_by_name('ID21DCP_evseStatus').frame_id, "can_mask": 0x7ff, "extended": False},
@@ -191,7 +229,7 @@ TWCAN = can.interface.Bus(channel=TWCANname, bustype='socketcan',can_filters=[
 
 SWCAN_ISOTP = isotp.socket()			#default recv timeout is 0.1 seconds
 SWCAN_ISOTP.set_fc_opts(stmin=5, bs=10)		#see https://can-isotp.readthedocs.io/en/latest/isotp/socket.html#socket.set_fc_opts
-SWCAN_ISOTP.bind(SWCANname, isotp.Address(rxid=1997, txid=1996))
+SWCAN_ISOTP.bind(ConfigFile['Buyer']['SWCANname'], isotp.Address(rxid=1997, txid=1996))
 
 
 class ReceiveInvoices(threading.Thread):
@@ -236,11 +274,7 @@ ReceiveInvoicesThread.start()			#starts .run() (and maybe some other stuff?)
 
 
 
-################################################################
 
-GUI.start()			#starts .run() (and maybe some other stuff?)
-
-################################################################
 
 
 
@@ -252,14 +286,16 @@ try:
 		#pass values to the GUI
 		GUI.Volts=Volts
 		GUI.Amps=Amps
+		GUI.Power=Power
 		GUI.BigStatus=BigStatus
 		GUI.SmallStatus=SmallStatus
 		GUI.EnergyDelivered=EnergyDelivered
-		GUI.EnergyPaidFor=EnergyPaidFor
-		GUI.CurrentRate=CurrentRate
+		GUI.EnergyPayments=EnergyPaidFor*CurrentRate
+		GUI.EnergyCost=EnergyDelivered*CurrentRate
+		GUI.RecentRate=CurrentRate
 		GUI.RequiredPaymentAmount=RequiredPaymentAmount
 		GUI.ChargeStartTime=ChargeStartTime
-		GUI.Proximity=Proximity
+		GUI.Connected=Proximity
 		GUI.MaxAmps=MaxAmps
 
 
@@ -284,33 +320,62 @@ try:
 				SWCANActive=False
 				Volts=None
 				Current=None
+				Power=0
+				MaxAmps=0
+
+			if getCANvalue(messageTW.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_ENABLED":
+				AC_CHARGE_ENABLED=True
+			elif getCANvalue(messageTW.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_STANDBY":
+				AC_CHARGE_ENABLED=False
+			else:
+	#don't know, need to handle this better!
+				pass
+
+
+
 
 
 		TheOutputVoltage=ProximityAnalogVoltage()
 
 		if SWCANActive and not Proximity:
+
 			Proximity=True
 			TimeStampedPrint("plug inserted")
 			BigStatus='Charge Cable Inserted'
 			SmallStatus=''
 
-			SWCAN_Relay.on()
-			TimeStampedPrint("relay energized")
-
 			CurrentTime=time()
 			EnergyDelivered=0
 
-		elif not SWCANActive and (Proximity):
-			Proximity=False
-			TimeStampedPrint("plug removed\n\n\n")
+		elif Proximity:
 
-			SWCAN_Relay.off()
+			if AC_CHARGE_ENABLED and SWCANActive:
+				if not SWCAN_Relay.is_lit:
+					SWCAN_Relay.on()
+					TimeStampedPrint("relay energized")
+					if BigStatus=='Charging Idle':
+						TimeStampedPrint('Charging Resume From Idle')
+						BigStatus='Charging'
+						SmallStatus=''
+			else:
+				if SWCAN_Relay.is_lit:
+					SWCAN_Relay.off()
+					TimeStampedPrint("relay off")
+					if SWCANActive:
+						TimeStampedPrint('Charging Idle')
+						BigStatus='Charging Idle'
+						SmallStatus='Waiting For Car To Resume Charging'
 
-			BigStatus='Charge Cable Removed'
-			SmallStatus=''
-			sleep(2)
-			BigStatus='Insert Charge Cable Into Car'
-			SmallStatus='Waiting For Charge Cable To Be Inserted'
+			if not SWCANActive:
+				Proximity=False
+				TimeStampedPrint("plug removed\n\n\n")
+				BigStatus='Charge Cable Removed'
+				SmallStatus=''
+				sleep(2)
+				BigStatus='Insert Charge Cable Into Car'
+				SmallStatus='Waiting For Charge Cable To Be Inserted'
+
+
 
 
 
@@ -364,7 +429,8 @@ try:
 					CurrentTime=time()
 					deltaT=(CurrentTime-PreviousTime)/3600		#hours, small error on first loop when Proximity is initially True
 
-					EnergyDelivered+=deltaT*Volts*Amps		#W*hours
+					Power=Volts*Amps
+					EnergyDelivered+=deltaT*Power		#W*hours
 
 
 					if len(ReceiveInvoicesThread.InvoiceQueue)>0:		#invoices are waiting to be paid
@@ -379,7 +445,7 @@ try:
 							SmallStatus='Payment Requested'
 							AllowedError=(0.025-0.10)/(20-5)*(Amps-5)+0.1       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
 
-							if (
+							if (		# TODO as noted elsewhere, need rework this to be in sat not W*hour
 									((EnergyPaidFor-EnergyDelivered)<WhoursPerPayment*0.70*2+EnergyDelivered*AllowedError+75)			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times.
 										and
 									(
@@ -399,6 +465,7 @@ try:
 #should check to make sure the "expiry" has not passed on the invoice yet before paying????
 									lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
 
+									# TODO as noted elsewhere, need rework this to be in sat not W*hour
 									EnergyPaidFor+=AmountRequested/CurrentRate
 
 									TimeStampedPrint("sent payment for "+str(AmountRequested)+" satoshis")

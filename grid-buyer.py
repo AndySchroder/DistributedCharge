@@ -183,7 +183,7 @@ def CheckSellOfferTerms(BuyOfferTerms,SellOfferTerms):
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(ConfigFile['Buyer']['LNDhost'], network=ConfigFile['Buyer']['LNDnetwork'], macaroon_filepath=TheDataFolder+'/lnd/admin.macaroon',cert_filepath=TheDataFolder+'/lnd/tls.cert')
+lnd = LNDClient(ConfigFile['Buyer']['LNDhost'], macaroon_filepath=TheDataFolder+'/lnd/admin.macaroon',cert_filepath=TheDataFolder+'/lnd/tls.cert')
 
 ################################################################
 

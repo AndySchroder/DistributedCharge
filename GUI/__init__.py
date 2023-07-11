@@ -121,7 +121,7 @@ class GUIClass(threading.Thread):
 		BTCimage.pack(side="top",padx=(int(10*self.screenscaling),int(0*self.screenscaling)),pady=int(10*self.screenscaling), anchor="nw")
 
 
-		Header=Label(RightFrame, background='white',text='Distributed Charge - GRID',font=('Courier', int(80*self.screenscaling), "bold"))
+		Header=Label(RightFrame, background='white',text='Distributed Charge',font=('Courier', int(80*self.screenscaling), "bold"))
 		Header.pack(anchor='center',pady=(int(35*self.screenscaling),int(20*self.screenscaling)))
 
 
@@ -179,22 +179,24 @@ class GUIClass(threading.Thread):
 
 
 
-#not sure why None is used instead of just 0 in wall.py and car.py
-			if (self.Volts is not None) and (self.Amps is not None) and (self.MaxAmps is not None):
+
+			# car.py and wall.py set Volts and Amps to None if there is no
+			# measurements available yet because don't want to integrate them
+			# and compute a bogus EnergyDelivered reading. however, here zero
+			# is just displayed.
+			if (self.Volts is not None) and (self.Amps is not None):
 				VoltsPrint=self.Volts
 				AmpsPrint=self.Amps
-				MaxAmpsPrint=self.MaxAmps
 			else:
 				VoltsPrint=0
 				AmpsPrint=0
-				MaxAmpsPrint=0
 
-			MaxPowerPrint=VoltsPrint*MaxAmpsPrint
+			MaxPowerPrint=VoltsPrint*self.MaxAmps
 
 			UnitSpecificationsText=(
 					#		'Current Type: Alternating, Single Phase\n'+
 							'Max Power:    '+RoundAndPadToString(MaxPowerPrint/1000.,DecimalPlaces=1,LeftPad=3)+' kW\n'+
-							'Max Current:  '+RoundAndPadToString(MaxAmpsPrint,DecimalPlaces=1,LeftPad=3)+' Amps RMS\n'+
+							'Max Current:  '+RoundAndPadToString(self.MaxAmps,DecimalPlaces=1,LeftPad=3)+' Amps RMS\n'+
 							'\n'+
 							'\n'+
 							'\n'
