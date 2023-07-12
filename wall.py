@@ -192,41 +192,7 @@ SWCAN_Relay.off()
 #initialize the LND RPC
 ################################################################
 
-if ConfigFile['Seller']['LNDhost'].startswith('lndconnect://'):
-
-	ParsedLNDConnect=urlparse(ConfigFile['Seller']['LNDhost'])
-	ParsedLNDConnectQuery=parse_qs(ParsedLNDConnect.query)
-
-	# note, below .hex() is used because that is what is expected by grpc. didn't want to do it here because want to have the tests of the raw file possible.
-	# not sure why GRPC doesn't send binary down the wire? or, maybe it does but whatever function deals with the macaroon first wants it in hex format for some reason.
-	Macaroon=urlsafe_b64decode(ParsedLNDConnectQuery['macaroon'][0])
-
-	# probably more complicated than just doing a simple encoding conversion but couldn't find any simple example or module to do that.
-	# since the PEM data with the header and footer removed and then decoded is just DER data, read that in
-	ProcessedCertificate=load_der_x509_certificate(urlsafe_b64decode(ParsedLNDConnectQuery['cert'][0]),default_backend())
-
-	# then export it back out using normal PEM format, which is what GRPC is expecting.
-	# note, this is bytes object and not a string, so would need to use .decode('utf8') on it in order to convert it to a string and make the line breaks do something and not just show up as a \n when printing
-	CertificatePEM=ProcessedCertificate.public_bytes(encoding=serialization.Encoding.PEM)
-
-	if True:	#check vs the original file to make sure lndconnect decoding is working
-		with open(str(Path.home())+'/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon', 'rb') as f:
-			macaroon_file_bytes = f.read()
-		print(Macaroon)
-		print(macaroon_file_bytes)
-		print(Macaroon==macaroon_file_bytes)
-
-		with open(str(Path.home())+'/.lnd/tls.cert', 'rb') as f:
-			cert_file = f.read()
-		print(CertificatePEM)
-		print(cert_file)
-		print(cert_file==CertificatePEM)
-
-	lnd = LNDClient(ParsedLNDConnect.netloc, macaroon=Macaroon.hex(), cert=CertificatePEM)
-
-else:
-	lnd = LNDClient(ConfigFile['Seller']['LNDhost'], macaroon_filepath=str(Path.home())+'/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon')
-
+lnd = LNDClient(ConfigFile['Seller']['LNDhost'], macaroon_filepath=str(Path.home())+'/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon')
 
 ################################################################
 
