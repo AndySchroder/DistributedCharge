@@ -446,7 +446,7 @@ try:
 							AllowedError=(0.025-0.10)/(20-5)*(Amps-5)+0.1       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
 
 							if (		# TODO as noted elsewhere, need rework this to be in sat not W*hour
-									((EnergyPaidFor-EnergyDelivered)<WhoursPerPayment*0.70*2+EnergyDelivered*AllowedError+75)			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times.
+									((EnergyPaidFor-EnergyDelivered)<WhoursPerPayment*0.70*2*4+EnergyDelivered*AllowedError+75)			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times. ------added an extra *4 to see if that helps (and it seems to be)
 										and
 									(
 										(AmountRequested<=RequiredPaymentAmount)			#not asking for too much payment
