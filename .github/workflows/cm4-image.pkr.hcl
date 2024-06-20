@@ -1,4 +1,4 @@
-variable "release_version" {
+variable "version" {
   type    = string
   default = "dev"
 }
@@ -9,7 +9,7 @@ source "arm" "cm4" {
   file_checksum_type    = "sha256"
   file_target_extension = "xz"
   file_unarchive_cmd    = ["unxz", "$ARCHIVE_PATH"]
-  image_path            = "output/cm4-custom-image-${var.release_version}.img"
+  image_path            = "output/cm4-custom-image-${var.version}.img"
   image_size            = "3G"
   image_type            = "dos"
   image_partitions {
@@ -56,7 +56,7 @@ build {
       "cp /home/ubuntu/Desktop/DistributedCharge/SampleConfig/Config.yaml /home/ubuntu/.dc/",
       "echo '@reboot xinit /home/ubuntu/Desktop/DistributedCharge/Launcher-car' | crontab -",
       "sed -i -e 's/allowed_users=console/allowed_users=anybody/g' /etc/X11/Xwrapper.config",
-      "echo '${var.release_version}' > /etc/cm4-image-version"
+      "echo '${var.version}' > /etc/cm4-image-version"
     ]
   }
 }
