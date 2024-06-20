@@ -1,0 +1,50 @@
+name: Build Custom CM4 Image
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Packer
+      uses: hashicorp/setup-packer@main
+
+    - name: Set release version
+      run: echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+    - name: Build CM4 Image
+      run: |
+        packer build -var "release_version=${{ env.RELEASE_VERSION }}" cm4-image.pkr.hcl
+
+    - name: Upload Image to Cloud Storage
+      uses: google-github-actions/upload-cloud-storage@main
+      with:
+        path: output/cm4-custom-image-${{ env.RELEASE_VERSION }}.img
+        destination: your-bucket-name/releases/${{ env.RELEASE_VERSION }}/
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./output/cm4-custom-image-${{ env.RELEASE_VERSION }}.img
+        asset_name: cm4-custom-image-${{ env.RELEASE_VERSION }}.img
+        asset_content_type: application/octet-stream
