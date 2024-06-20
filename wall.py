@@ -192,7 +192,7 @@ SWCAN_Relay.off()
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(ConfigFile['Seller']['LNDhost'], macaroon_filepath=str(Path.home())+'/.lnd/data/chain/bitcoin/mainnet/invoice.macaroon')
+lnd = LNDClient(ConfigFile['Seller']['LNDhost'])
 
 ################################################################
 

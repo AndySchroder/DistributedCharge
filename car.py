@@ -186,7 +186,7 @@ SWCAN_Relay.off()
 #initialize the LND RPC
 ################################################################
 
-lnd = LNDClient(ConfigFile['Buyer']['LNDhost'], admin=True)
+lnd = LNDClient(ConfigFile['Buyer']['LNDhost'])
 
 ################################################################
 
