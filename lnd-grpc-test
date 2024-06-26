@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+
+
+################################################################
+# import modules
+################################################################
+
+from lndgrpc import LNDClient
+from yaml import safe_load
+from argparse import ArgumentParser,RawTextHelpFormatter
+from common import TheDataFolder
+
+
+
+################################################################
+# parse the command line
+################################################################
+
+parser = ArgumentParser(description="lnd-grpc-test: test python lndgrpc function calls that are used by Distributed Charge.\n\nThis script can be thought of as a dumbed down version of lncli. However, instead of using the `tls.cert` and `admin.macaroon` files in the ~/.lnd/ directory, it uses an lndconnect: URI string found in the ~/.dc/Config.yaml file. This script can test that your lndconnect: string is valid, that the python lnd grpc functions are installed and working properly, and that your node are able to be connected to. It can also be used to test if a function call works with the macaroon that you are using and/or the Lightning Terminal `Accounts` system, which has more limited functionality.",formatter_class=RawTextHelpFormatter)
+parser.add_argument(
+			"Action",
+			choices=['get_info','lookup_invoice','add_invoice','add_hold_invoice','cancel_invoice','settle_invoice','decode_payment_request','send_payment','track_payment_v2','track_payments','subscribe_invoices','subscribe_single_invoice','get_best_block','get_block_hash','get_block','channel_balance'],
+			help='Action to take:\n'+
+			'\t\t`get_info` gets information about your lnd node.\n'+
+			'\t\t`lookup_invoice` checks the status of an invoice.\n'+
+			'\t\t`add_invoice` adds an invoice.\n'+
+			'\t\t`add_hold_invoice` adds a hold invoice.\n'+
+			'\t\t`cancel_invoice` cancels a hold invoice.\n'+
+			'\t\t`settle_invoice` settles a hold invoice.\n'+
+			'\t\t`decode_payment_request` decodes an invoice.\n'+
+			'\t\t`send_payment` pays an invoice.\n'+
+			'\t\t`track_payment_v2` tracks an outbound payment.\n'+
+			'\t\t`track_payments` tracks all outbound payments.\n'+
+			'\t\t`subscribe_invoices` tracks all invoices.\n'+
+			'\t\t`subscribe_single_invoice` tracks a single invoice.\n'+
+			'\t\t`get_best_block` gets the latest block.\n'+
+			'\t\t`get_block_hash` gets a block hash at a specific block height.\n'+
+			'\t\t`get_block` gets an entire block based on a block hash.\n'+
+			'\t\t`channel_balance` gets the channel balance.\n'+
+			''
+			)
+
+
+parser.add_argument('-c','--config-path', help="override path to `Config.yaml` (default `~/.dc/` or defined by the `DC_DATADIR` environmental variable)", type=str,default=None)
+parser.add_argument('-f','--config-file-name', help="override the name of `Config.yaml`", type=str,default=None)
+parser.add_argument('-p','--party', choices=['Buyer', 'Seller'],default='Seller',help="party to use in `Config.yaml` to select the `LNDhost` value from (default: %(default)s).")
+parser.add_argument('--LNDhost', help="override the `LNDhost` value that was read from the config file (value passed must be enclosed in quotes so that your shell does not misinterpret it)", type=str, default=None)
+
+parser.add_argument('--amount', default=1,type=int,help="`add_invoice` and `add_hold_invoice` amount (default: %(default)s) [sat].")
+parser.add_argument('--r_hash',type=str,help="`lookup_invoice`, `cancel_invoice`, `subscribe_single_invoice`, and `track_payment_v2` r_hash (hex)")
+parser.add_argument('--preimage',type=str,help="`settle_invoice`, preimage (hex)")
+parser.add_argument('--invoice',type=str,help="`send_payment` and `decode_payment_request` invoice")
+parser.add_argument('--block_height',type=int,help="`get_block_hash` block_height")
+parser.add_argument('--block_hash',type=str,help="`get_block` block_hash (hex)")
+
+
+arguments=parser.parse_args()
+
+
+
+################################################################
+# import config
+################################################################
+
+if arguments.config_path is not None:
+	TheDataFolder=arguments.config_path
+
+if arguments.config_file_name is not None:
+	TheConfigFile=arguments.config_file_name
+else:
+	TheConfigFile='Config.yaml'
+
+with open(TheDataFolder+TheConfigFile, 'r') as file:
+	ConfigFile=safe_load(file)
+
+
+
+
+################################################################
+# setup connection to LND
+################################################################
+
+if arguments.LNDhost is None:
+	LNDhost=ConfigFile[arguments.party]['LNDhost']
+else:
+	LNDhost=arguments.LNDhost
+
+lnd = LNDClient(LNDhost)
+
+
+
+
+
+
+
+
+
+
+
+################################################################
+# act based on the command line arguments
+################################################################
+
+print()
+
+
+if   arguments.Action == 'get_info':
+	print(lnd.get_info())
+
+
+elif   arguments.Action == 'channel_balance':
+	print(lnd.channel_balance())
+
+
+elif   arguments.Action == 'get_block':
+	print(lnd.get_block(bytes.fromhex(arguments.block_hash)))
+
+
+elif   arguments.Action == 'get_best_block':
+	Block=lnd.get_best_block()
+	print(Block)
+	print('hex versions:')
+	print('block_hash: '+Block.block_hash.hex())
+
+
+elif   arguments.Action == 'get_block_hash':
+	Block=lnd.get_block_hash(arguments.block_height)
+	print(Block)
+	print('hex versions:')
+	print('block_hash: '+Block.block_hash.hex())
+
+
+elif arguments.Action == 'add_invoice':
+	TheInvoice=lnd.add_invoice(arguments.amount)
+	print(TheInvoice)
+
+	print('hex versions:')
+	print('r_hash: '+TheInvoice.r_hash.hex())
+	print('payment_addr: '+TheInvoice.payment_addr.hex())
+
+
+elif arguments.Action == 'add_hold_invoice':
+	TheInvoice, r_hash, preimage = lnd.add_hold_invoice(value=arguments.amount)
+
+	print(TheInvoice)
+
+	print('hex versions:')
+	print('r_hash: '+r_hash.hex())
+	print('r_preimage: '+preimage.hex())
+
+
+elif arguments.Action == 'cancel_invoice':
+	TheResponse=lnd.cancel_invoice(bytes.fromhex(arguments.r_hash))
+	print(TheResponse)
+
+
+elif arguments.Action == 'settle_invoice':
+	TheResponse=lnd.settle_invoice(bytes.fromhex(arguments.preimage))
+	print(TheResponse)
+
+
+elif arguments.Action == 'lookup_invoice':
+	TheInvoice=lnd.lookup_invoice(bytes.fromhex(arguments.r_hash))
+	print(TheInvoice)
+
+	print('hex versions:')
+	print('r_preimage: '+TheInvoice.r_preimage.hex())
+	print('r_hash: '+TheInvoice.r_hash.hex())
+	print('payment_addr: '+TheInvoice.payment_addr.hex())
+
+
+elif arguments.Action == 'decode_payment_request':
+	TheInvoice=lnd.decode_payment_request(arguments.invoice)
+	print(TheInvoice)
+
+
+elif arguments.Action == 'send_payment':
+	TheInvoice=lnd.send_payment(arguments.invoice)
+	print(TheInvoice)
+
+	print('payment_preimage: '+TheInvoice.payment_preimage.hex())
+	print('payment_hash: '+TheInvoice.payment_hash.hex())
+
+
+elif arguments.Action == 'track_payment_v2':
+	for TheResponse in lnd.track_payment_v2(arguments.r_hash):
+		print('====================================================================================')
+		print(TheResponse)
+
+
+elif arguments.Action == 'track_payments':
+	for TheResponse in lnd.track_payments():
+		print('====================================================================================')
+		print(TheResponse)
+
+
+elif arguments.Action == 'subscribe_invoices':
+	for Invoice in lnd.subscribe_invoices():
+		print('====================================================================================')
+		print(Invoice)
+
+elif arguments.Action == 'subscribe_single_invoice':
+	for Invoice in lnd.subscribe_single_invoice(bytes.fromhex(arguments.r_hash)):
+		print('====================================================================================')
+		print(Invoice)
+
+
+
+
+
+print()
+
+
+
+
