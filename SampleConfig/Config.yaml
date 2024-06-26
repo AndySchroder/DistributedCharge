@@ -2,7 +2,7 @@
 Seller:
 
         ##### common settings ####
-        LNDhost:                          'HostNameOrIPAddress:TCPPORT'
+        LNDhost:                          'lndconnect://<host>:<port>?[cert=<base64url DER certificate>&]macaroon=<base64url macaroon>'
         PrintWarningMessages:             True
 
 
@@ -24,7 +24,7 @@ Seller:
 Buyer:
 
         ##### common settings ####
-        LNDhost:                          'HostNameOrIPAddress:TCPPORT'
+        LNDhost:                          'lndconnect://<host>:<port>?[cert=<base64url DER certificate>&]macaroon=<base64url macaroon>'
         PrintWarningMessages:             True
 
 
