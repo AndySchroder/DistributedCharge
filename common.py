@@ -51,7 +51,7 @@ MakeFolderIfItDoesNotExist(TheDataFolder)
 if EnvironmentPopulated('DC_DATAARCHIVEDIR'):
 	TheDataArchiveFolder=environ.get('DC_DATAARCHIVEDIR')
 else:
-	TheDataArchiveFolder=TheDataFolder+'/DataArchive/'
+	TheDataArchiveFolder=TheDataFolder+'DataArchive/'
 TimeStampedPrint('DataArchiveFolder set to '+TheDataArchiveFolder)
 MakeFolderIfItDoesNotExist(TheDataArchiveFolder)
 
