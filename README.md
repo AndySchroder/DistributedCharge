@@ -5,7 +5,7 @@
   
 _______________________________________________________________________________
 
-[![Simple Schematic](DistributedCharge-SimplestSchematic.png)](http://AndySchroder.com/DistributedCharge/)
+[![Simple Schematic](docs/DistributedCharge-SimplestSchematic.png)](http://AndySchroder.com/DistributedCharge/)
 _______________________________________________________________________________
   
   
