@@ -1,0 +1,3 @@
+[submodule "dc/model3dbc"]
+	path = dc/model3dbc
+	url = https://github.com/joshwardell/model3dbc
