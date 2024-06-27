@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2023, Andy Schroder
+# Copyright (c) 2024, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -17,7 +17,7 @@ from os.path import isfile,isdir
 from helpers2 import RoundAndPadToString,TimeStampedPrint,FullDateTimeString,FormatTimeDeltaToPaddedString,SetPrintWarningMessages
 from textwrap import indent
 from threading import Thread
-from SocketHelpers import PackTopicAndJSONAndSend
+from .SocketHelpers import PackTopicAndJSONAndSend
 from time import sleep
 from datetime import datetime
 from pydbus import SystemBus

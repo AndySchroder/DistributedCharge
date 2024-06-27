@@ -3,8 +3,8 @@
 
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2024, Andy Schroder
-#See the file README.md for licensing information.
+# Copyright (c) 2024, Andy Schroder
+# See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
 
@@ -26,8 +26,8 @@ from cryptography.x509 import load_der_x509_certificate
 from cryptography.hazmat.primitives import serialization
 
 from dc.m3 import m3, getCANvalue
-from GUI import GUIThread as GUI
-from common import TheDataFolder,WaitForTimeSync
+from dc.GUI import GUIThread as GUI
+from dc.common import TheDataFolder,WaitForTimeSync
 from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages
 from gpiozero import LED

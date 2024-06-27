@@ -4,6 +4,7 @@ __pycache__
 config.json
 settings.json
 
-
+build
+*.egg-info/
 
 

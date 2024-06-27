@@ -8,7 +8,7 @@
 from lndgrpc import LNDClient
 from yaml import safe_load
 from argparse import ArgumentParser,RawTextHelpFormatter
-from common import TheDataFolder
+from dc.common import TheDataFolder
 
 
 

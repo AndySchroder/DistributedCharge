@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2023, Andy Schroder
+# Copyright (c) 2024, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -12,7 +12,7 @@
 
 
 from inotify.adapters import Inotify
-from common import TheDataFolder
+from .common import TheDataFolder
 from yaml import safe_load
 from threading import Thread
 from time import sleep

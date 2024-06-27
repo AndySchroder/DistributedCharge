@@ -3,8 +3,8 @@
 
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2024, Andy Schroder
-#See the file README.md for licensing information.
+# Copyright (c) 2024, Andy Schroder
+# See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
 
@@ -20,8 +20,8 @@ from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
 from dc.m3 import m3, getCANvalue
-from GUI import GUIThread as GUI
-from common import TheDataFolder,WaitForTimeSync
+from dc.GUI import GUIThread as GUI
+from dc.common import TheDataFolder,WaitForTimeSync
 from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages
 from gpiozero import LED

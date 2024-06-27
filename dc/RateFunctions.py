@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2022, Andy Schroder
+# Copyright (c) 2024, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -16,7 +16,7 @@ from math import floor
 from scipy.interpolate import interp1d
 from datetime import datetime,timedelta
 from time import time,sleep
-from ReadRates import RateFile
+from .ReadRates import RateFile
 from threading import Thread
 from copy import deepcopy
 

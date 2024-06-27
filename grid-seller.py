@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2023, Andy Schroder
+# Copyright (c) 2024, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -25,8 +25,8 @@ from time import sleep,time
 from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
-from GUI import GUIThread as GUI
-from common import StatusPrint,UpdateVariables,TheDataFolder,WaitForTimeSync,TimeStampedPrintAndSmallStatusUpdate
+from dc.GUI import GUIThread as GUI
+from dc.common import StatusPrint,UpdateVariables,TheDataFolder,WaitForTimeSync,TimeStampedPrintAndSmallStatusUpdate
 from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,FullDateTimeString,SetPrintWarningMessages
 
@@ -42,7 +42,7 @@ from pathlib import Path
 from cryptography.x509 import load_pem_x509_certificate
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
-from SocketHelpers import SendMessage,ReceiveMessage
+from dc.SocketHelpers import SendMessage,ReceiveMessage
 from secrets import token_bytes
 
 
@@ -94,7 +94,7 @@ WaitForTimeSync(GUI)
 
 ################################################################
 
-from RateFunctions import GenerateCurrentSellOfferTerms,MeterMonitor	#uses TimeStampedPrint, so do this import away from the rest of the modules
+from dc.RateFunctions import GenerateCurrentSellOfferTerms,MeterMonitor	#uses TimeStampedPrint, so do this import away from the rest of the modules
 
 
 ################################################################

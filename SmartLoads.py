@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2023, Andy Schroder
+# Copyright (c) 2024, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -24,11 +24,11 @@ from fabric import Connection
 from time import sleep
 from gpiozero import LED
 from threading import Thread
-from common import TheDataFolder,TheDataArchiveFolder,MakeFolderIfItDoesNotExist
+from dc.common import TheDataFolder,TheDataArchiveFolder,MakeFolderIfItDoesNotExist
 from yaml import safe_load
 from zmq import Context,SUB,SUBSCRIBE
 from helpers2 import RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages,irange
-from SocketHelpers import ReceiveAndUnPackTopicAndJSON
+from dc.SocketHelpers import ReceiveAndUnPackTopicAndJSON
 from datetime import datetime
 from copy import copy
 from numpy import asarray,abs
