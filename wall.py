@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2023, Andy Schroder
+#Copyright (c) 2024, Andy Schroder
 #See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -25,7 +25,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.x509 import load_der_x509_certificate
 from cryptography.hazmat.primitives import serialization
 
-from m3 import m3, getCANvalue
+from dc.m3 import m3, getCANvalue
 from GUI import GUIThread as GUI
 from common import TheDataFolder,WaitForTimeSync
 from yaml import safe_load

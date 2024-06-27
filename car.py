@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2023, Andy Schroder
+#Copyright (c) 2024, Andy Schroder
 #See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -19,7 +19,7 @@ from time import sleep,time
 from datetime import datetime,timedelta
 
 from lndgrpc import LNDClient
-from m3 import m3, getCANvalue
+from dc.m3 import m3, getCANvalue
 from GUI import GUIThread as GUI
 from common import TheDataFolder,WaitForTimeSync
 from yaml import safe_load

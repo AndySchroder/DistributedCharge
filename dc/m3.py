@@ -1,6 +1,6 @@
 ###############################################################################
 ###############################################################################
-#Copyright (c) 2020, Andy Schroder
+#Copyright (c) 2024, Andy Schroder
 #See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -12,9 +12,10 @@
 #prepare to easily decode Tesla Model 3 CAN bus messages
 ################################################################
 
-import cantools
+from cantools import database
+from pathlib import Path
 
-m3=cantools.database.load_file('../model3dbc/Model3CAN.dbc')
+m3=database.load_file(str(Path(__file__).parent.resolve())+'/model3dbc/Model3CAN.dbc')
 
 def getCANvalue(message,IDname,Signal):
 	try:
