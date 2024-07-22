@@ -9,7 +9,8 @@
 ###############################################################################
 
 
-
+# first must import config variables from the parent module
+from . import mode, TheConfigFile, TheDataFolder, LNDhost
 
 from pathlib import Path
 from os import makedirs,environ
@@ -18,11 +19,86 @@ from helpers2 import RoundAndPadToString,TimeStampedPrint,FullDateTimeString,For
 from textwrap import indent
 from threading import Thread
 from .SocketHelpers import PackTopicAndJSONAndSend
+from .GUI import GUIClass					# might want to rename this module since GUI is used below for the actual GUI object?
+from dc.m3 import m3, getCANvalue
 from time import sleep
 from datetime import datetime
 from pydbus import SystemBus
+from lndgrpc import LNDClient
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from textwrap import dedent
+from yaml import safe_load
+import can, isotp
 
 
+
+
+
+
+
+
+################################
+# need to clean this up and make a smarter way to detect if running on raspi or not
+
+try:
+	from gpiozero import LED               # https://gpiozero.readthedocs.io/
+	import mcp3008
+
+########################################################################################
+
+
+
+
+
+
+
+
+################################################################
+# cleanly catch shutdown signals
+################################################################
+
+from signal import signal, SIGABRT, SIGILL, SIGINT, SIGSEGV, SIGTERM
+
+# catch kill signals so can cleanly shut down. this is critical to properly restore state of digital outputs to turn everything off, write files back to disk, properly release network sockets, etc..
+def clean(*args):
+	sys.exit(0)
+
+def CatchKill():
+	# warning, does not catch SIGKILL.
+	for sig in (SIGABRT, SIGILL, SIGINT, SIGSEGV, SIGTERM):
+		signal(sig, clean)
+
+CatchKill()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################################################################
+# define party mappings
+################################################################
+
+PartyMappings = {
+			'car': 'Buyer',
+			'wall': 'Seller',
+			'grid-buyer': 'Buyer',
+			'grid-seller': 'Seller',
+			'lnd-grpc-test-Buyer': 'Buyer',
+			'lnd-grpc-test-Seller': 'Seller',
+		}
+
+
+################################################################
 
 
 def EnvironmentPopulated(VariableName):
@@ -30,75 +106,25 @@ def EnvironmentPopulated(VariableName):
 
 def MakeFolderIfItDoesNotExist(Folder):
 	if not isdir(Folder):
-		TimeStampedPrint(Folder+' does not exist, so creating it')
 		makedirs(Folder)
+		return True
+	else:
+		return False
 
 
 ################################################################
-# adjust directory paths from the defaults if they have been defined by an environmental variable
+# adjust directory paths from the defaults if they have been defined by an environmental variable if not passed on the command line and create TheDataFolder if it does not exist
 ################################################################
 
-SetPrintWarningMessages(True)		# always print what is going on with the directories
-
-if EnvironmentPopulated('DC_DATADIR'):
+if TheDataFolder != str(Path.home())+'/.dc/' and EnvironmentPopulated('DC_DATADIR'):
 	TheDataFolder=environ.get('DC_DATADIR')
-else:
-	TheDataFolder=str(Path.home())+'/.dc/'
-TimeStampedPrint('DataFolder set to '+TheDataFolder)
-MakeFolderIfItDoesNotExist(TheDataFolder)
+MadeNewDataFolder=MakeFolderIfItDoesNotExist(TheDataFolder)
 
 
 if EnvironmentPopulated('DC_DATAARCHIVEDIR'):
 	TheDataArchiveFolder=environ.get('DC_DATAARCHIVEDIR')
 else:
 	TheDataArchiveFolder=TheDataFolder+'DataArchive/'
-TimeStampedPrint('DataArchiveFolder set to '+TheDataArchiveFolder)
-MakeFolderIfItDoesNotExist(TheDataArchiveFolder)
-
-################################################################
-
-
-
-
-################################################################
-# prepare to write the DataLogFile
-################################################################
-
-# TODO: restructure this section. this is run by every script that imports this module (such as SmartLoads.py) even when it isn't needed.
-# it doesn't really hurt much to do it in every script since all it is doing is opening the file and writing the header row
-# but that's a bit sloppy to have a different process write the header file and then leave the file open for writing for no reason.
-
-TheDataLogFolder=TheDataArchiveFolder#+'/DataLog/'
-MakeFolderIfItDoesNotExist(TheDataLogFolder)
-
-# open the output file --- need to fix this so that it re-opens a new file every day, but right now, it just sticks with the file created during the time it was started up.
-#DataLogFile='DataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt'
-DataLogFile='DataLog'+'.txt'
-
-ColumnHeaders  = ''
-if not isfile(TheDataLogFolder+DataLogFile):
-	ColumnHeaders += 'UnixTime'				+ '\t'
-	ColumnHeaders += 'DateTime'				+ '\t'
-	ColumnHeaders += 'SessionTime'				+ '\t'
-	ColumnHeaders += 'SalePeriodTimeRemaining[sec]'		+ '\t'
-	ColumnHeaders += 'SalePeriodNumber'			+ '\t'
-	ColumnHeaders += 'Power[W]'				+ '\t'
-	ColumnHeaders += 'Volts'				+ '\t'
-	ColumnHeaders += 'Amps'					+ '\t'
-	ColumnHeaders += 'EnergyDelivered[Wh]'			+ '\t'
-	ColumnHeaders += 'Rate[sat/Wh]'				+ '\t'
-	ColumnHeaders += 'MaxAuthorizedRate[sat/Wh]'		+ '\t'
-	ColumnHeaders += 'EnergyCost[sat]'			+ '\t'
-	ColumnHeaders += 'TotalPaymentAmount[sat]'		+ '\t'
-	ColumnHeaders += 'TotalNumberOfPayments'		+ '\t'
-	ColumnHeaders += '\n'
-
-DataLogFileHandle = open(TheDataLogFolder+DataLogFile, "a")
-
-DataLogFileHandle.write(ColumnHeaders)		#if file already existed, ColumnHeaders will be empty, so nothing will be written.
-DataLogFileHandle.flush()
-
-SetPrintWarningMessages(False)		# return to the default
 
 ################################################################
 
@@ -107,6 +133,125 @@ SetPrintWarningMessages(False)		# return to the default
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################################################################
+# setup logging
+################################################################
+
+import sys,logging
+from datetime import datetime
+
+class PreciseTimeFormatterWithColorizedLevel(logging.Formatter):
+
+	COLOR_CODES = {
+		logging.CRITICAL: "\033[1;35m", # bright/bold magenta
+		logging.ERROR:    "\033[1;31m", # bright/bold red
+		logging.WARNING:  "\033[1;33m", # bright/bold yellow
+		logging.INFO:     "\033[0;37m", # white / light gray
+		logging.DEBUG:    "\033[1;30m"  # bright/bold black / dark gray
+	}
+
+	RESET_CODE = "\033[0m"
+
+	converter=datetime.fromtimestamp			# need to use datetime because time.strftime doesn't do microseconds, which is what is used in https://github.com/python/cpython/blob/3.11/Lib/logging/__init__.py
+	def formatTime(self, record, datefmt):
+		if datefmt is None:                     # logging.Formatter (?) seems to set it as None if not defined, so can't just define the default in the definition of formatTime
+			datefmt='%Y.%m.%d--%H.%M.%S.%f'
+			ct = self.converter(record.created)
+		return ct.strftime(datefmt)
+
+	def __init__(self, color, *args, **kwargs):
+		super(PreciseTimeFormatterWithColorizedLevel, self).__init__(*args, **kwargs)
+		self.color = color
+
+	def format(self, record, *args, **kwargs):
+		if (self.color == True):
+
+			record.TIMEDATECOLOR = "\033[1;37;40m"		# simple example https://www.kaggle.com/discussions/general/273188
+			record.FUNCTIONNAMECOLOR = "\033[1;37;44m"
+
+			if (record.levelno in self.COLOR_CODES):
+				record.color_on  = self.COLOR_CODES[record.levelno]
+				record.color_off = self.RESET_CODE
+		else:
+			record.color_on  = ""
+			record.color_off = ""
+			record.TIMEDATECOLOR = ""
+			record.FUNCTIONNAMECOLOR = ""
+
+		return super(PreciseTimeFormatterWithColorizedLevel, self).format(record, *args, **kwargs)
+
+
+
+
+console_log_level="info"
+logfile_log_level="debug"
+
+FormatStringTemplate='%(TIMEDATECOLOR)s%(asctime)s%(color_off)s [%(color_on)s%(levelname)8s%(color_off)s, %(FUNCTIONNAMECOLOR)s%(funcName)8.8s%(color_off)s]:   %(message)s'
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+console = logging.StreamHandler(sys.stdout)
+console.setLevel(console_log_level.upper())
+ColorizeConsole=sys.stdout.isatty()				# if directed to a tty colorize, otherwise don't (so won't get escape sequences in systemd logs for example)
+console.setFormatter(PreciseTimeFormatterWithColorizedLevel(fmt=FormatStringTemplate, color=ColorizeConsole))
+
+
+logfile = logging.FileHandler(TheDataFolder+"debug.log")
+logfile.setLevel(logfile_log_level.upper()) # only accepts uppercase level names
+logfile.setFormatter(PreciseTimeFormatterWithColorizedLevel(fmt=FormatStringTemplate, color=False))
+
+logger.addHandler(console)
+logger.addHandler(logfile)
+
+
+# needs to be after creating TheDataFolder so it has a place to write to but not waiting until reading TheConfigFile, because always want to write this, regardless of the value of DebugLevel
+logger.info('--------------------- startup ! ---------------------')
+
+################################################################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################################################################
+# general functions
+################################################################
 
 
 def StatusPrint(Meter,GUI,SellOfferTerms,PaymentsReceived,SalePeriods,MaxAuthorizedRateInterpolator=None):
@@ -262,6 +407,293 @@ def WaitForTimeSync(GUI):
 
 
 
+
+
+
+
+
+
+
+
+
+
+if	(
+		(
+			(
+				'lnd-grpc-test' in mode
+				and
+				LNDhost is None		# when running lnd-grpc-test, nothing else is needed from TheConfigFile if LNDhost is passed
+			)
+			or
+			('lnd-grpc-test' not in mode)		# still want to read config if dc.LNDhost is not None because need other things in there
+		)
+		and
+		(
+			mode in PartyMappings.keys()
+			and
+			Path(TheDataFolder+TheConfigFile).is_file()
+		)
+	):
+
+	################################################################
+	# import values from config file
+	################################################################
+
+	with open(TheDataFolder+TheConfigFile, 'r') as file:
+		ConfigFile=safe_load(file)
+
+
+	# need to use the function so that it can modify the value inside the imported module so that everything that imports TimeStampedPrint will get this value.
+	SetPrintWarningMessages(ConfigFile[PartyMappings[mode]]['PrintWarningMessages'])
+
+	# change the default value for the log file (standard output remains at INFO)
+	logfile.setLevel(ConfigFile[PartyMappings[mode]]['DebugLevel'].upper())
+
+	################################################################
+
+	ConfigLoaded = True
+	logger.info('configuration loaded')
+
+else:
+	ConfigLoaded = False
+	logger.info('no configuration loaded')
+
+
+
+################################################################
+# set and create directories
+################################################################
+
+
+# needs to be after loading configuration since setLevel() needs to know the value of DebugLevel
+logger.info('DataFolder set to '+TheDataFolder)
+if MadeNewDataFolder:
+	# couldn't write this until there was a place to write it to, so had to remember and then write when it was possible.
+	logger.info(TheDataFolder+' did not exist, so created it!')
+
+logger.info('DataArchiveFolder set to '+TheDataArchiveFolder)
+if MakeFolderIfItDoesNotExist(TheDataArchiveFolder):
+	logger.info(TheDataArchiveFolder+' does not exist, so creating it')
+
+
+
+
+################################################################
+# prepare to write the DataLogFile
+################################################################
+
+# TODO: restructure this section. this is run by every script that imports this module (such as SmartLoads.py) even when it isn't needed.
+# it doesn't really hurt much to do it in every script since all it is doing is opening the file and writing the header row
+# but that's a bit sloppy to have a different process write the header file and then leave the file open for writing for no reason.
+
+TheDataLogFolder=TheDataArchiveFolder#+'/DataLog/'
+
+logger.info('TheDataLogFolder set to '+TheDataLogFolder)
+if MakeFolderIfItDoesNotExist(TheDataLogFolder):
+	logger.info(TheDataLogFolder+' does not exist, so creating it')
+
+# open the output file --- need to fix this so that it re-opens a new file every day, but right now, it just sticks with the file created during the time it was started up.
+#DataLogFile='DataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt'
+DataLogFile='DataLog'+'.txt'
+
+ColumnHeaders  = ''
+if not isfile(TheDataLogFolder+DataLogFile):
+	ColumnHeaders += 'UnixTime'				+ '\t'
+	ColumnHeaders += 'DateTime'				+ '\t'
+	ColumnHeaders += 'SessionTime'				+ '\t'
+	ColumnHeaders += 'SalePeriodTimeRemaining[sec]'		+ '\t'
+	ColumnHeaders += 'SalePeriodNumber'			+ '\t'
+	ColumnHeaders += 'Power[W]'				+ '\t'
+	ColumnHeaders += 'Volts'				+ '\t'
+	ColumnHeaders += 'Amps'					+ '\t'
+	ColumnHeaders += 'EnergyDelivered[Wh]'			+ '\t'
+	ColumnHeaders += 'Rate[sat/Wh]'				+ '\t'
+	ColumnHeaders += 'MaxAuthorizedRate[sat/Wh]'		+ '\t'
+	ColumnHeaders += 'EnergyCost[sat]'			+ '\t'
+	ColumnHeaders += 'TotalPaymentAmount[sat]'		+ '\t'
+	ColumnHeaders += 'TotalNumberOfPayments'		+ '\t'
+	ColumnHeaders += '\n'
+
+DataLogFileHandle = open(TheDataLogFolder+DataLogFile, "a")
+
+DataLogFileHandle.write(ColumnHeaders)		#if file already existed, ColumnHeaders will be empty, so nothing will be written.
+DataLogFileHandle.flush()
+
+################################################################
+
+
+
+
+
+
+
+
+
+
+
+logger.info('mode: '+mode)
+
+
+
+
+if mode in PartyMappings.keys():
+	logger.info('Party: '+PartyMappings[mode])
+
+	if not ConfigLoaded and LNDhost is None:
+		raise Exception(TheDataFolder+TheConfigFile+' not loaded and no LNDhost defined')
+
+
+	################################################################
+	#initialize the LND RPC
+	################################################################
+
+	if LNDhost is None:		# get the value from the config file if not explicitly set.
+		LNDhost=ConfigFile[PartyMappings[mode]]['LNDhost']
+
+	lnd = LNDClient(LNDhost)
+
+	################################################################
+
+
+	if not ConfigLoaded and 'lnd-grpc-test' not in mode:
+		raise Exception(TheDataFolder+TheConfigFile+' not loaded and required')
+
+
+	if mode == 'car' or mode == 'wall':
+
+		################################################################
+		# initialize GPIO
+		################################################################
+
+		SWCAN_Relay = LED(16)
+
+		#should be off on boot, but just make sure it is off on startup in case the script crashed/killed with it on and is being restarted without rebooting.
+		SWCAN_Relay.off()
+
+		################################################################
+
+
+
+		################################################################
+		# initialize the SWCAN bus
+		################################################################
+
+		can_Message = can.Message		# make it so this can be imported by other things importing SWCAN and TWCAN because don't think could import can.Message (but maybe should test it!!!!!!!)
+
+		SWCAN = can.interface.Bus(channel=ConfigFile[PartyMappings[mode]]['SWCANname'], bustype='socketcan',can_filters=[	#only pickup IDs of interest so don't waste time processing tons of unused data
+												{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
+												{"can_id": 1998, "can_mask": 0x7ff, "extended": False},		#wall offer
+												{"can_id": 1999, "can_mask": 0x7ff, "extended": False},		#car acceptance of offer
+												{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
+												{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
+												])
+
+		################################################################
+
+
+
+		################################################################
+		#initialize CAN ISOTP
+		################################################################
+
+		RXID = {}
+		RXID['wall']	= 1996
+		RXID['car']	= 1997
+
+		TXID = {	# rxid of wall is txid of car, and txid of wall is rxid of the car
+				'wall' : RXID['car'],
+				'car'  : RXID['wall']
+			}
+
+		#CAN ISOTP is a higher level protocol used to transfer larger amounts of data than the base CAN allows
+		#this creates its own separate socket to the CAN bus on the same single wire can interface from the
+		#other standard can messaging that occurs in this script
+
+		SWCAN_ISOTP = isotp.socket()				#default recv timeout is 0.1 seconds
+		SWCAN_ISOTP.set_fc_opts(stmin=25, bs=10)		#see https://can-isotp.readthedocs.io/en/latest/isotp/socket.html#socket.set_fc_opts . note: car used to use stmin=5 but don't remember why
+		SWCAN_ISOTP.bind(ConfigFile[PartyMappings[mode]]['SWCANname'], isotp.Address(rxid=RXID[mode], txid=TXID[mode]))
+
+
+
+		################################################################
+
+
+
+
+
+
+
+	if mode == 'car':
+
+		################################################################
+		# initialize the CAN bus
+		################################################################
+		TWCAN = can.interface.Bus(channel=ConfigFile[PartyMappings[mode]]['TWCANname'], bustype='socketcan',can_filters=[
+												{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
+												{"can_id": 1990, "can_mask": 0x7ff, "extended": False},
+												{"can_id": m3.get_message_by_name('ID21DCP_evseStatus').frame_id, "can_mask": 0x7ff, "extended": False},
+												{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
+												{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
+												])
+		################################################################
+
+	elif mode == 'wall':
+
+		################################################################
+		# initialize the mcp3008
+		################################################################
+
+		Vref=3.3
+		adc = mcp3008.MCP3008(1,max_speed_hz=int(976000/15))
+
+		def PilotAnalogVoltage():
+			return adc.read([mcp3008.CH1],Vref)[0]*7.6-12-.22
+
+		def ProximityAnalogVoltage():
+			return adc.read([mcp3008.CH0],Vref)[0]*3.2/2.2
+
+
+
+		################################################################
+
+
+
+
+
+
+
+
+if mode is not None and 'lnd-grpc-test' not in mode:
+
+	################################################################
+	# parse the command line
+	################################################################
+
+	parser = ArgumentParser(
+										formatter_class=RawDescriptionHelpFormatter,
+										epilog=dedent('''
+										additional information:
+											 Exit :                Control+C or Escape
+											 Toggle Fullscreen :   f or double click
+										''')
+									)
+	parser.add_argument('--fullscreen', action='store_true',help="Run full screen (default: %(default)s).")
+	parser.add_argument('--maximized', action='store_true',help="Start maximized (default: %(default)s).")
+	parser.add_argument('--geometry',type=str,help="Start with specific window size and position, i.e. 800x480+100+50 .")
+	arguments=parser.parse_args()
+
+
+
+	################################################################
+
+	# launch the GUI
+	GUI=GUIClass(arguments)		#create the thread
+	GUI.start()			#starts .run() (and maybe some other stuff?)
+
+	WaitForTimeSync(GUI)
+
+	# uncomment to add a pause if doing a screen record and need time to organize windows to the right size before anything else gets printed to standard output.
+	#sleep(120)
 
 
 

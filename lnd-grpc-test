@@ -11,20 +11,14 @@
 
 
 
+
+
+
 ################################################################
-# import modules
+# before importing modules (except for argparse), parse the command line
 ################################################################
 
-from lndgrpc import LNDClient
-from yaml import safe_load
 from argparse import ArgumentParser,RawTextHelpFormatter
-from dc.common import TheDataFolder
-
-
-
-################################################################
-# parse the command line
-################################################################
 
 parser = ArgumentParser(description="lnd-grpc-test: test python lndgrpc function calls that are used by Distributed Charge.\n\nThis script can be thought of as a dumbed down version of lncli. However, instead of using the `tls.cert` and `admin.macaroon` files in the ~/.lnd/ directory, it uses an lndconnect: URI string found in the ~/.dc/Config.yaml file. This script can test that your lndconnect: string is valid, that the python lnd grpc functions are installed and working properly, and that your node are able to be connected to. It can also be used to test if a function call works with the macaroon that you are using and/or the Lightning Terminal `Accounts` system, which has more limited functionality.",formatter_class=RawTextHelpFormatter)
 parser.add_argument(
@@ -69,33 +63,38 @@ arguments=parser.parse_args()
 
 
 ################################################################
-# import config
+# import dc and then override default values
 ################################################################
 
-if arguments.config_path is not None:
-	TheDataFolder=arguments.config_path
+import dc
+
+dc.mode='lnd-grpc-test-'+arguments.party
 
 if arguments.config_file_name is not None:
-	TheConfigFile=arguments.config_file_name
-else:
-	TheConfigFile='Config.yaml'
+	dc.TheConfigFile=arguments.config_file_name
 
-with open(TheDataFolder+TheConfigFile, 'r') as file:
-	ConfigFile=safe_load(file)
+if arguments.config_path is not None:
+	dc.TheDataFolder=arguments.config_path
+
+if arguments.LNDhost is not None:
+	dc.LNDhost=arguments.LNDhost
+
+
+
+
+
 
 
 
 
 ################################################################
-# setup connection to LND
+# now import the rest of the modules
 ################################################################
 
-if arguments.LNDhost is None:
-	LNDhost=ConfigFile[arguments.party]['LNDhost']
-else:
-	LNDhost=arguments.LNDhost
+from dc.common import lnd
 
-lnd = LNDClient(LNDhost)
+
+
 
 
 

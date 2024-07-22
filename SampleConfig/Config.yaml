@@ -4,6 +4,7 @@ Seller:
         ##### common settings ####
         LNDhost:                          'lndconnect://<host>:<port>?[cert=<base64url DER certificate>&]macaroon=<base64url macaroon>'
         PrintWarningMessages:             True
+        DebugLevel:                       debug                                   # valid options: debug, info, warning, error, critical
 
 
         #### GRID related settings ####
@@ -26,6 +27,7 @@ Buyer:
         ##### common settings ####
         LNDhost:                          'lndconnect://<host>:<port>?[cert=<base64url DER certificate>&]macaroon=<base64url macaroon>'
         PrintWarningMessages:             True
+        DebugLevel:                       debug                                   # valid options: debug, info, warning, error, critical
 
 
         #### GRID related settings ####
