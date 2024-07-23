@@ -289,7 +289,7 @@ while True:
 
 									logger.info("payment received, time since last payment received="+str(time()-LastPaymentReceivedTime)+"s")
 									ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=round((datetime.now()-ChargeStartTime).total_seconds())))	#round to the nearest second, then format as a zero padded string
-									logger.info('WhoursPaidFor: '+RoundAndPadToString(EnergyCredit,1)+', WhoursDelivered: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2)+',   ChargeSessionTime: '+ChargeTimeText)
+									logger.info('WhoursCreditRemaining: '+RoundAndPadToString(EnergyCredit,1)+', WhoursDelivered: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2)+',   ChargeSessionTime: '+ChargeTimeText)
 
 									LastPaymentReceivedTime=time()
 
