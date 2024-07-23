@@ -43,6 +43,8 @@ import can, isotp
 try:
 	from gpiozero import LED               # https://gpiozero.readthedocs.io/
 	import mcp3008
+except:
+	pass
 
 ########################################################################################
 
