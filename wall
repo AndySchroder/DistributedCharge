@@ -20,7 +20,7 @@ import dc
 dc.mode='wall'
 
 # dc.common must be the second imported module because it reads the config
-from dc.common import ConfigFile, ProximityAnalogVoltage, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, lnd, GUI, logger
+from dc.common import ConfigFile, ProximityAnalogVoltage, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, GUI, logger, AddAndWatchInvoice
 
 from time import sleep,time
 from datetime import datetime,timedelta
@@ -278,13 +278,10 @@ while True:
 
 							#check to see if the current invoice has been paid
 							try:
-								logger.info("trying to check the current invoice's payment status")
-								OutstandingInvoiceStatus=lnd.lookup_invoice(OutstandingInvoice.r_hash)
-								logger.info("checked the current invoice's payment status")
-								if OutstandingInvoiceStatus.settled:
+								if OutstandingInvoice.state==1:
 
 									# TODO as noted below, need rework this to be in sat not W*hour
-									EnergyPaidFor+=OutstandingInvoiceStatus.value/(CurrentRate)		#W*hours
+									EnergyPaidFor+=OutstandingInvoice.value/(CurrentRate)		#W*hours
 
 									# also re-calculate here if a payment was just received since changing the value of InitialInvoice needs to know the real EnergyCredit before repeating the loop.
 									EnergyCredit = EnergyPaidFor-EnergyDelivered		# W*hours
@@ -321,9 +318,7 @@ while True:
 							RequiredPaymentAmount=WhoursPerPayment*CurrentRate				#sat
 
 							try:
-								logger.info("trying to get an invoice")
-								OutstandingInvoice=lnd.add_invoice(RequiredPaymentAmount)
-								logger.info("got an invoice")
+								OutstandingInvoice=AddAndWatchInvoice(RequiredPaymentAmount,'Distributed Charge Energy Payment')
 
 								#need to add a try except here, because the buyer may not be listening properly!!!!!!!!!!!!
 								SWCAN_ISOTP.send(OutstandingInvoice.payment_request.encode())			#send the new invoice using CAN ISOTP
@@ -353,9 +348,7 @@ while True:
 
 						try:
 							FirstRequiredPaymentAmount=1*RequiredPaymentAmount				#sat, adjust multiplier if desire the first payment to be higher than regular payments.
-							logger.info("trying to get first invoice")
-							OutstandingInvoice=lnd.add_invoice(FirstRequiredPaymentAmount)
-							logger.info("got first invoice")
+							OutstandingInvoice=AddAndWatchInvoice(FirstRequiredPaymentAmount,'Distributed Charge Energy Payment')
 
 							#buyer accepted the rate
 							OfferAccepted=True
@@ -372,8 +365,9 @@ while True:
 							PendingInvoice=True
 						except:
 #probably the protocol will get stuck if this exception is caught because the buyer won't re-send the acceptance message. maybe need buyer to keep repeating the acceptance message until the seller sends an acknowledgement???
-							logger.info("tried getting a new (first) invoice but there was probably a network connection issue")
-							sleep(.25)
+#							logger.info("tried getting a new (first) invoice but there was probably a network connection issue")
+#							sleep(.25)
+							raise
 
 					elif (message is not None) and (message.arbitration_id == 1999 and message.data[0]==0):
 						OfferAccepted=False
