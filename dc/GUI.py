@@ -561,7 +561,7 @@ class GUIClass(threading.Thread):
 				logger.info('stopping GUI')
 				sys.exit()
 
-			sleep(0.05)
+			sleep(0.50)
 
 
 
