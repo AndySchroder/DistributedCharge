@@ -59,9 +59,6 @@ ProximityVoltageTolerance=0.05*2*2.5		#need the extra *2.5 for 208V power? was g
 CurrentRate=1							#sat/(W*hour)
 WhoursPerPayment=int(25)					#W*hour/payment
 RequiredPaymentAmount=int(WhoursPerPayment*CurrentRate)		#sat/payment
-#MaxAmps=6       #5 doesn't seem to work (the car just reverts to 6 but the Distributed Charge display still says 5), but if 6 is used, can manually drop to 5 on the car screen. don't want to go between 7 and 18 amps because it tries to do the "spike amps", and this also includes manually overriding on the car screen.
-MaxAmps=20
-
 
 ################################################################
 
@@ -127,7 +124,7 @@ logger.info("should be connected to the TWC")
 
 ####################
 #not positive these are needed here since will be done below with every instance of the loop, but do it anyway because want something defined before sendStartCommand
-TWCManager.master.setChargeNowAmps(MaxAmps)				#set maximum current. need to refine this statement if have multiple wall units.
+TWCManager.master.setChargeNowAmps(ConfigFile['Seller']['MaxAmps'])				#set maximum current. need to refine this statement if have multiple wall units.
 TWCManager.master.setChargeNowTimeEnd(int(3600))			#set how long to hold the current for, in seconds. need to refine this statement if have multiple wall units.
 ####################
 
@@ -158,7 +155,7 @@ while True:
 		GUI.RequiredPaymentAmount=RequiredPaymentAmount
 		GUI.ChargeStartTime=ChargeStartTime
 		GUI.Connected=Proximity
-		GUI.MaxAmps=MaxAmps
+		GUI.MaxAmps=ConfigFile['Seller']['MaxAmps']
 
 
 		#not sure how to make ChargeNow perpetual, so just add an hour on every loop.

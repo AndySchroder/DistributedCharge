@@ -7,6 +7,11 @@ Seller:
         DebugLevel:                       debug                                   # valid options: debug, info, warning, error, critical
 
 
+        # 5 doesn't seem to work (the car just reverts to 6 but the Distributed Charge display still says 5), but if 6 is used,
+        # can manually drop to 5 on the car screen. don't want to go between 7 and 18 amps because it tries to do the "spike amps", and this also includes manually overriding on the car screen.
+        MaxAmps:                          6
+
+
         #### GRID related settings ####
         RemoteClientIdentifier:           'naLNM4EkYBLxJ510BrNLeyZukJWrAi'
 
