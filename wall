@@ -20,7 +20,7 @@ import dc
 dc.mode='wall'
 
 # dc.common must be the second imported module because it reads the config
-from dc.common import ConfigFile, ProximityAnalogVoltage, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, GUI, logger, AddAndWatchInvoice
+from dc.common import ConfigFile, ProximityAnalogVoltage, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, GUI, logger, AddAndWatchInvoice, SMTPNotification
 
 from time import sleep,time
 from datetime import datetime,timedelta
@@ -402,6 +402,7 @@ while True:
 					TWCManager.master.sendStopCommand()					#need to refine this statement if have multiple wall units.
 					SmallStatus='Vehicle Did Not Make Payment'
 
+					SMTPNotification('buyer never paid','')
 
 
 
@@ -464,6 +465,9 @@ while True:
 	except:
 		logger.exception('error in main loop')
 		CleanShutdown=False
+
+		emailer=SMTPNotification('error in main loop','')
+		emailer.join()		# allow the e-mail to actually send
 		raise
 
 	finally:

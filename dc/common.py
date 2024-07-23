@@ -31,6 +31,14 @@ from yaml import safe_load
 import can, isotp
 
 
+from smtplib import SMTP
+from socket import gethostname
+from getpass import getuser
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import COMMASPACE, formatdate,make_msgid
+
 
 
 
@@ -428,6 +436,69 @@ class AddAndWatchInvoice(Thread):
 
 
 
+class SMTPNotification(Thread):
+
+	def __init__(self,subject,text):
+		super(SMTPNotification, self).__init__()
+		self.daemon=True		# using daemon mode so control-C will stop the script and the threads.
+
+		self.subject=subject
+		self.text=text
+
+		self.start()			# auto start on initialization
+
+
+	def run(self):
+
+		# if configured, then send e-mail
+		try:
+			logger.debug('sending e-mail notification')
+
+			if 'sender' in ConfigFile['Notifications']['SMTP'] and ConfigFile['Notifications']['SMTP']['sender'] is not None:
+				send_from=ConfigFile['Notifications']['SMTP']['sender']
+			else:
+				send_from=getuser()+'@'+gethostname()
+
+			assert isinstance(ConfigFile['Notifications']['SMTP']['recipients'], list)
+
+			send_date=None
+			msg = MIMEMultipart()
+			msg['From'] = send_from
+			msg['To'] = COMMASPACE.join(ConfigFile['Notifications']['SMTP']['recipients'])
+			if send_date is None:
+				send_date = formatdate(localtime=True)
+			msg['Date'] = send_date
+			msg['Subject'] = self.subject
+			msg['Message-ID']=make_msgid()          #add this because google email servers decided they want it for some reason as of August, 2022.
+
+			msg.attach(MIMEText(self.text))
+
+			while True:
+				try:
+					smtp = SMTP(ConfigFile['Notifications']['SMTP']['server'],ConfigFile['Notifications']['SMTP']['port'])
+
+					#hopefully this actually starts a secure connection like it is supposed to do.
+					smtp.starttls()
+					smtp.ehlo()
+
+					smtp.login(ConfigFile['Notifications']['SMTP']['username'], ConfigFile['Notifications']['SMTP']['password'])
+					smtp.sendmail(send_from, ConfigFile['Notifications']['SMTP']['recipients'], msg.as_string())
+					smtp.close()
+
+					logger.debug('sent e-mail notification')
+
+					break
+				except:
+					logger.exception('error sending e-mail. waiting 5 seconds and trying again.')
+					sleep(5)
+
+		except:
+			logger.debug('e-mail not configured properly, not sending e-mail notification')
+
+
+
+
+
 def TimeStampedPrintAndSmallStatusUpdate(Message,GUI):
 	GUI.SmallStatus=Message
 	TimeStampedPrint(Message)
@@ -462,16 +533,16 @@ def WaitForTimeSync(GUI):
 if	(
 		(
 			(
-				'lnd-grpc-test' in mode
+				mode is not None and 'lnd-grpc-test' in mode
 				and
 				LNDhost is None		# when running lnd-grpc-test, nothing else is needed from TheConfigFile if LNDhost is passed
 			)
 			or
-			('lnd-grpc-test' not in mode)		# still want to read config if dc.LNDhost is not None because need other things in there
+			(mode is not None and 'lnd-grpc-test' not in mode)		# still want to read config if dc.LNDhost is not None because need other things in there
 		)
 		and
 		(
-			mode in PartyMappings.keys()
+			mode in PartyMappings
 			and
 			Path(TheDataFolder+TheConfigFile).is_file()
 		)
@@ -573,12 +644,12 @@ DataLogFileHandle.flush()
 
 
 
-logger.info('mode: '+mode)
+logger.info('mode: '+str(mode))
 
 
 
 
-if mode in PartyMappings.keys():
+if mode in PartyMappings:
 	logger.info('Party: '+PartyMappings[mode])
 
 	if not ConfigLoaded and LNDhost is None:

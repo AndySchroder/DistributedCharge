@@ -1,3 +1,12 @@
+Notifications:
+        SMTP:
+               username: username
+               password: password
+               server:   server
+               port:     587
+               sender:   user@domain                   #optional. if ommitted or 'null', the current username and the machine hostname is used, but many e-mail servers won't relay messages for hostnames that are not a fully qualified public domain name.
+               recipients:
+                             - user@domain
 
 Seller:
 
