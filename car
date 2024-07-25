@@ -12,22 +12,25 @@
 
 
 ################################################################
-#import modules
+# import modules
 ################################################################
+
+# dc must be the first module initialized and then immediately set the mode
+import dc
+dc.mode='car'
+
+# dc.common must be the second imported module because it reads the config
+from dc.common import ConfigFile, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, TWCAN, lnd, GUI
 
 from time import sleep,time
 from datetime import datetime,timedelta
 
-from lndgrpc import LNDClient
-from dc.m3 import m3, getCANvalue
-from dc.GUI import GUIThread as GUI
-from dc.common import TheDataFolder,WaitForTimeSync
-from yaml import safe_load
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages
-from gpiozero import LED
+
+import threading,sys
+
 from collections import deque
 
-import can,isotp,helpers2,threading,sys,mcp3008
 
 
 
@@ -36,61 +39,6 @@ import can,isotp,helpers2,threading,sys,mcp3008
 
 
 
-
-
-
-
-
-#want to change some values for some objects in imported modules, so couldn't use "from" when importing specific objects.
-#now, assign a shorter name to the specific objects of interest that will not be changed, but will be used frequently.
-
-Message=can.Message
-
-
-################################################################
-
-
-
-
-
-################################################################
-# import values from config file
-################################################################
-
-with open(TheDataFolder+'Config.yaml', 'r') as file:
-	ConfigFile=safe_load(file)
-
-
-# need to use the function so that it can modify the value inside the imported module so that everything that imports TimeStampedPrint will get this value.
-SetPrintWarningMessages(ConfigFile['Buyer']['PrintWarningMessages'])
-
-################################################################
-
-
-
-
-
-
-
-
-
-
-print('')
-print('')
-TimeStampedPrint('startup!')			#needs to be after loading configuration since TimeStampedPrint needs to know the value of PrintWarningMessages
-TimeStampedPrint('configuration loaded')
-
-################################################################
-
-# launch the GUI before anything gets printed to standard output
-GUI.start()			#starts .run() (and maybe some other stuff?)
-
-WaitForTimeSync(GUI)
-
-# uncomment to add a pause if doing a screen record and need time to organize windows to the right size before anything gets printed to standard output.
-#sleep(120)
-
-################################################################
 
 
 
@@ -115,8 +63,11 @@ MaxRequiredPaymentAmount=41	#sat
 
 
 
+
+
+
 ################################################################
-#initialize variables
+# initialize variables
 ################################################################
 
 AC_CHARGE_ENABLED=False
@@ -148,88 +99,13 @@ SmallStatus='Waiting For Charge Cable To Be Inserted'
 
 
 
-################################################################
-#initialize the mcp3008
-################################################################
-
-Vref=3.3
-adc = mcp3008.MCP3008(1,max_speed_hz=int(976000/15))
-
-def PilotAnalogVoltage():
-	return adc.read([mcp3008.CH1],Vref)[0]*7.6-12-.22
-
-def ProximityAnalogVoltage():
-	return adc.read([mcp3008.CH0],Vref)[0]*3.2/2.2
-
-
-
-################################################################
 
 
 
 
-################################################################
-#initialize GPIO
-################################################################
-
-SWCAN_Relay = LED(16)
-
-#should be off on boot, but just make sure it is off on startup in case the script crashed/killed with it on and is being restarted without rebooting.
-SWCAN_Relay.off()
-
-
-################################################################
 
 
 
-################################################################
-#initialize the LND RPC
-################################################################
-
-lnd = LNDClient(ConfigFile['Buyer']['LNDhost'])
-
-################################################################
-
-
-
-################################################################
-#initialize the CAN bus
-################################################################
-
-SWCAN = can.interface.Bus(channel=ConfigFile['Buyer']['SWCANname'], bustype='socketcan',can_filters=[	#only pickup IDs of interest so don't waste time processing tons of unused data
-										{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
-										{"can_id": 1998, "can_mask": 0x7ff, "extended": False},		#wall offer
-										{"can_id": 1999, "can_mask": 0x7ff, "extended": False},		#car acceptance of offer
-										{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
-										{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
-										])
-
-
-
-TWCAN = can.interface.Bus(channel=ConfigFile['Buyer']['TWCANname'], bustype='socketcan',can_filters=[
-										{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
-										{"can_id": 1990, "can_mask": 0x7ff, "extended": False},
-										{"can_id": m3.get_message_by_name('ID21DCP_evseStatus').frame_id, "can_mask": 0x7ff, "extended": False},
-										{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
-										{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
-										])
-
-
-################################################################
-
-
-
-################################################################
-#initialize CAN ISOTP
-################################################################
-
-#CAN ISOTP is a higher level protocol used to transfer larger amounts of data than the base CAN allows
-#this creates its own separate socket to the CAN bus on the same single wire can interface from the
-#other standard can messaging that occurs in this script
-
-SWCAN_ISOTP = isotp.socket()			#default recv timeout is 0.1 seconds
-SWCAN_ISOTP.set_fc_opts(stmin=5, bs=10)		#see https://can-isotp.readthedocs.io/en/latest/isotp/socket.html#socket.set_fc_opts
-SWCAN_ISOTP.bind(ConfigFile['Buyer']['SWCANname'], isotp.Address(rxid=1997, txid=1996))
 
 
 class ReceiveInvoices(threading.Thread):
@@ -335,7 +211,6 @@ try:
 
 
 
-		TheOutputVoltage=ProximityAnalogVoltage()
 
 		if SWCANActive and not Proximity:
 
@@ -515,7 +390,7 @@ try:
 
 					#print('getting ready to accept an offer')
 
-					SWCAN.send(Message(arbitration_id=1999,data=[True],is_extended_id=False))
+					SWCAN.send(can_Message(arbitration_id=1999,data=[True],is_extended_id=False))
 					TimeStampedPrint("accepted an offer of "+RoundAndPadToString(WhoursPerPayment,1)+" W*hour for a payment of "+str(RequiredPaymentAmount)+" satoshis ["+RoundAndPadToString(CurrentRate,1)+" satoshis/(W*hour)]")
 
 					ChargeStartTime=datetime.now()
@@ -525,7 +400,7 @@ try:
 
 
 				else:					#don't accept the rate, it's too high. wait and see if a lower offer is made.
-					SWCAN.send(Message(arbitration_id=1999,data=[False],is_extended_id=False))
+					SWCAN.send(can_Message(arbitration_id=1999,data=[False],is_extended_id=False))
 					TimeStampedPrint("rate or payment amount too high, not accepting")
 					SmallStatus='Rejected Sale Terms, Waiting for a Better Offer'
 #provide more detail in outputs on why was not accepted
