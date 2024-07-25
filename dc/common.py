@@ -722,7 +722,7 @@ if mode in PartyMappings:
 		#this creates its own separate socket to the CAN bus on the same single wire can interface from the
 		#other standard can messaging that occurs in this script
 
-		SWCAN_ISOTP = isotp.socket()				#default recv timeout is 0.1 seconds
+		SWCAN_ISOTP = isotp.socket(timeout=0.1)
 		SWCAN_ISOTP.set_fc_opts(stmin=25, bs=10)		#see https://can-isotp.readthedocs.io/en/latest/isotp/socket.html#socket.set_fc_opts . note: car used to use stmin=5 but don't remember why
 		SWCAN_ISOTP.bind(ConfigFile[PartyMappings[mode]]['SWCANname'], isotp.Address(rxid=RXID[mode], txid=TXID[mode]))
 

@@ -132,7 +132,7 @@ class ReceiveInvoices(threading.Thread):
 
 	def run(self):
 		while True:
-			NewInvoice=SWCAN_ISOTP.recv()		#as mentioned above, SWCAN_ISOTP is set to timeout every 0.1 seconds, so it automatically sleeps for us
+			NewInvoice=SWCAN_ISOTP.recv()		#SWCAN_ISOTP is set to timeout every 0.1 seconds, so it automatically sleeps for us
 			if NewInvoice is not None:
 				self.InvoiceQueue.append(NewInvoice)
 			if self._stop_event.is_set():
