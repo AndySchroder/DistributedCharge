@@ -20,12 +20,12 @@ import dc
 dc.mode='car'
 
 # dc.common must be the second imported module because it reads the config
-from dc.common import ConfigFile, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, TWCAN, lnd, GUI
+from dc.common import ConfigFile, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, TWCAN, lnd, GUI, logger
 
 from time import sleep,time
 from datetime import datetime,timedelta
 
-from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,TimeStampedPrint,SetPrintWarningMessages
+from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,SetPrintWarningMessages
 
 import threading,sys
 
@@ -215,7 +215,7 @@ try:
 		if SWCANActive and not Proximity:
 
 			Proximity=True
-			TimeStampedPrint("plug inserted")
+			logger.info("plug inserted")
 			BigStatus='Charge Cable Inserted'
 			SmallStatus=''
 
@@ -227,23 +227,23 @@ try:
 			if AC_CHARGE_ENABLED and SWCANActive:
 				if not SWCAN_Relay.is_lit:
 					SWCAN_Relay.on()
-					TimeStampedPrint("relay energized")
+					logger.debug("relay energized")
 					if BigStatus=='Charging Idle':
-						TimeStampedPrint('Charging Resume From Idle')
+						logger.debug('Charging Resume From Idle')
 						BigStatus='Charging'
 						SmallStatus=''
 			else:
 				if SWCAN_Relay.is_lit:
 					SWCAN_Relay.off()
-					TimeStampedPrint("relay off")
+					logger.debug("relay off")
 					if SWCANActive:
-						TimeStampedPrint('Charging Idle')
+						logger.debug('Charging Idle')
 						BigStatus='Charging Idle'
 						SmallStatus='Waiting For Car To Resume Charging'
 
 			if not SWCANActive:
 				Proximity=False
-				TimeStampedPrint("plug removed\n\n\n")
+				logger.debug("plug removed\n\n\n")
 				BigStatus='Charge Cable Removed'
 				SmallStatus=''
 				sleep(2)
@@ -310,13 +310,13 @@ try:
 
 					if len(ReceiveInvoicesThread.InvoiceQueue)>0:		#invoices are waiting to be paid
 						try:
-							TimeStampedPrint("trying to decode the invoice")
+							logger.debug("trying to decode the invoice")
 							oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft()
 
 							AmountRequested=lnd.decode_payment_request(oldestInvoice).num_satoshis		#consider making timeout shorter as noted below for the other exception because it just hangs up the script and the GUI never updates while this is happening.
-							TimeStampedPrint("decoded the invoice")
+							logger.debug("decoded the invoice")
 
-							TimeStampedPrint("seller wants to be paid "+str(AmountRequested)+" satoshis")
+							logger.info("seller wants to be paid "+str(AmountRequested)+" satoshis")
 							SmallStatus='Payment Requested'
 							AllowedError=(0.025-0.10)/(20-5)*(Amps-5)+0.1       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
 
@@ -336,23 +336,23 @@ try:
 
 								try:
 
-									TimeStampedPrint("sending payment")
+									logger.debug("sending payment")
 #should check to make sure the "expiry" has not passed on the invoice yet before paying????
 									lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
 
 									# TODO as noted elsewhere, need rework this to be in sat not W*hour
 									EnergyPaidFor+=AmountRequested/CurrentRate
 
-									TimeStampedPrint("sent payment for "+str(AmountRequested)+" satoshis")
+									logger.info("sent payment for "+str(AmountRequested)+" satoshis")
 									ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=round((datetime.now()-ChargeStartTime).total_seconds())))	#round to the nearest second, then format as a zero padded string
-									TimeStampedPrint('WhoursReceived: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2)+',   ChargeSessionTime: '+ChargeTimeText)
+									logger.info('WhoursReceived: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2)+',   ChargeSessionTime: '+ChargeTimeText)
 
 									SmallStatus='Payment Sent'
 
 								except:
 #lnd.send_payment doesn't fail (raise a python exception) if the payment fails to route, only if lnd.send_payment can't contact the lnd node. so, need to check the response from lnd.send_payment to see what actually happened
 #also, seems to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting.
-									TimeStampedPrint("tried sending payment but there was probably a network connection issue")
+									logger.error("tried sending payment but there was probably a network connection issue")
 									sleep(.25)
 
 							else:
@@ -364,14 +364,14 @@ try:
 
 
 								ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
-	#							TimeStampedPrint("not yet time to pay, waiting")
+	#							logger.debug("not yet time to pay, waiting")
 
 						except:
-							TimeStampedPrint("tried decoding the invoice but there was probably a network connection issue")
+							logger.error("tried decoding the invoice but there was probably a network connection issue")
 							ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
 
 					else:
-#						TimeStampedPrint("waiting for next invoice")
+#						logger.debug("waiting for next invoice")
 						pass
 
 
@@ -391,7 +391,7 @@ try:
 					#print('getting ready to accept an offer')
 
 					SWCAN.send(can_Message(arbitration_id=1999,data=[True],is_extended_id=False))
-					TimeStampedPrint("accepted an offer of "+RoundAndPadToString(WhoursPerPayment,1)+" W*hour for a payment of "+str(RequiredPaymentAmount)+" satoshis ["+RoundAndPadToString(CurrentRate,1)+" satoshis/(W*hour)]")
+					logger.info("accepted an offer of "+RoundAndPadToString(WhoursPerPayment,1)+" W*hour for a payment of "+str(RequiredPaymentAmount)+" satoshis ["+RoundAndPadToString(CurrentRate,1)+" satoshis/(W*hour)]")
 
 					ChargeStartTime=datetime.now()
 
@@ -401,7 +401,7 @@ try:
 
 				else:					#don't accept the rate, it's too high. wait and see if a lower offer is made.
 					SWCAN.send(can_Message(arbitration_id=1999,data=[False],is_extended_id=False))
-					TimeStampedPrint("rate or payment amount too high, not accepting")
+					logger.info("rate or payment amount too high, not accepting")
 					SmallStatus='Rejected Sale Terms, Waiting for a Better Offer'
 #provide more detail in outputs on why was not accepted
 
@@ -425,7 +425,7 @@ except (KeyboardInterrupt, SystemExit):
 	GUI.stop()
 	GUI.join()	#for some reason if this is not used, python tries too quit before the stop command is received by the thread and it gracefully shutdown and then it takes longer for tk to timeout and close the interpreter?
 
-	TimeStampedPrint("quitting")
+	logger.info("quitting")
 
 except:
 	raise
@@ -435,7 +435,7 @@ finally:
 	# the state should be restored to off when python is stopped, but explicitly set to off to be sure.
 	SWCAN_Relay.off()
 
-	TimeStampedPrint("turned off relay\n\n\n")
+	logger.debug("turned off relay\n\n\n")
 
 
 
