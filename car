@@ -20,7 +20,7 @@ import dc
 dc.mode='car'
 
 # dc.common must be the second imported module because it reads the config
-from dc.common import ConfigFile, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, TWCAN, lnd, GUI, logger
+from dc.common import ConfigFile, m3, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, TWCAN, lnd, GUI, logger
 
 from time import sleep,time
 from datetime import datetime,timedelta
