@@ -20,7 +20,7 @@ m3=database.load_file(str(Path(__file__).parent.resolve())+'/model3dbc/Model3CAN
 def getCANvalue(message,IDname,Signal):
 	try:
 		return m3.get_message_by_name(IDname).decode(message)[Signal]
-	except cantools.database.errors.DecodeError:
+	except database.errors.DecodeError:
 #		print('Signal not found in DBC file')
 		pass
 	except:
