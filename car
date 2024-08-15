@@ -56,6 +56,7 @@ MaxRate=1.5			#sat/(W*hour)
 
 MaxRequiredPaymentAmount=41	#sat
 
+MaxFeeFraction=0.03
 
 ################################################################
 
@@ -520,36 +521,47 @@ try:
 								):										#if all good, then it's time to send another invoice
 
 								try:
-									logger.debug("sending payment")
-#should check to make sure the "expiry" has not passed on the invoice yet before paying????
-									lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
+									LNDBalance=lnd.channel_balance().local_balance.sat
+									logger.info('LND (off chain) account balance :  '+RoundAndPadToString(LNDBalance,0)+' sat')
 								except:
-#lnd.send_payment doesn't fail (raise a python exception) if the payment fails to route, only if lnd.send_payment can't contact the lnd node. so, need to check the response from lnd.send_payment to see what actually happened
-#also, seems to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting.
-									logger.exception("tried sending payment but there was probably a network connection issue")
-									ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
-
+									logger.exception('tried getting LND (off chain) account balance but there was probably a network connection issue.')
 									sleep(2)
 								else:
-									logger.info("sent payment for "+str(AmountRequested)+" satoshis")
-									logger.info('total outstanding invoices is now '+str(len(ReceiveInvoicesThread.InvoiceQueue)))
+									if LNDBalance<AmountRequested*(1+MaxFeeFraction):
+										logger.error('LND (off chain) account balance is too low')
+										sleep(20)
+									else:
+										try:
+											logger.debug("sending payment")
+		#should check to make sure the "expiry" has not passed on the invoice yet before paying????
+											lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
+										except:
+		#lnd.send_payment doesn't fail (raise a python exception) if the payment fails to route, only if lnd.send_payment can't contact the lnd node. so, need to check the response from lnd.send_payment to see what actually happened
+		#also, seems to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting.
+											logger.exception("tried sending payment but there was probably a network connection issue")
+											ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
 
-									# TODO as noted elsewhere, need rework this to be in sat not W*hour
-									EnergyPaidFor+=AmountRequested/CurrentRate
-									NumberOfPaymentsReceived+=1
+											sleep(2)
+										else:
+											logger.info("sent payment for "+str(AmountRequested)+" satoshis")
+											logger.info('total outstanding invoices is now '+str(len(ReceiveInvoicesThread.InvoiceQueue)))
 
-									#################################################
-									# hack: define values for the Meter class to use
-									# as a placeholder until the real Meter class
-									# is ported from GRID to EV so that LogData can work
-									#################################################
+											# TODO as noted elsewhere, need rework this to be in sat not W*hour
+											EnergyPaidFor+=AmountRequested/CurrentRate
+											NumberOfPaymentsReceived+=1
 
-									Meter.EnergyPayments = EnergyPaidFor*CurrentRate
-									Meter.NumberOfPaymentsReceived = NumberOfPaymentsReceived
-									#################################################
+											#################################################
+											# hack: define values for the Meter class to use
+											# as a placeholder until the real Meter class
+											# is ported from GRID to EV so that LogData can work
+											#################################################
 
-									DataLogger.LogTabularDataAndMessages()
-									SmallStatus='Payment Sent'
+											Meter.EnergyPayments = EnergyPaidFor*CurrentRate
+											Meter.NumberOfPaymentsReceived = NumberOfPaymentsReceived
+											#################################################
+
+											DataLogger.LogTabularDataAndMessages()
+											SmallStatus='Payment Sent'
 
 							else:
 								#seller is asking for payment to quickly, waiting until they deliver energy that was agreed upon.
