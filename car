@@ -124,8 +124,11 @@ class ReceiveInvoices(threading.Thread):
 		self._stop_event = threading.Event()
 		self.InvoiceQueue=deque()
 		self.daemon=True		# using daemon mode so control-C will stop the script and the threads.
+		logger.info('listening on SWCAN for new invoices')
+		self.start()			# auto start on initialization
 
 	def stop(self):
+		logger.debug('ReceiveInvoices thread stop requested')
 		self._stop_event.set()
 
 	def stopped(self):
@@ -136,13 +139,17 @@ class ReceiveInvoices(threading.Thread):
 			NewInvoice=SWCAN_ISOTP.recv()		#SWCAN_ISOTP is set to timeout every 0.1 seconds, so it automatically sleeps for us
 			if NewInvoice is not None:
 				self.InvoiceQueue.append(NewInvoice)
+				logger.info('new invoice received and added to the queue. total outstanding invoices is now '+str(len(self.InvoiceQueue)))
 			if self._stop_event.is_set():
 				break
+
+		logger.info('stopped ReceiveInvoices thread')
+
 
 
 
 ReceiveInvoicesThread=ReceiveInvoices()		#create the thread
-ReceiveInvoicesThread.start()			#starts .run() (and maybe some other stuff?)
+
 
 ################################################################
 
@@ -436,6 +443,7 @@ try:
 									sleep(0.01)
 								else:
 									logger.info("sent payment for "+str(AmountRequested)+" satoshis")
+									logger.info('total outstanding invoices is now '+str(len(ReceiveInvoicesThread.InvoiceQueue)))
 
 									# TODO as noted elsewhere, need rework this to be in sat not W*hour
 									EnergyPaidFor+=AmountRequested/CurrentRate
