@@ -123,18 +123,18 @@ def MakeFolderIfItDoesNotExist(Folder):
 
 
 ################################################################
-# adjust directory paths from the defaults if they have been defined by an environmental variable if not passed on the command line and create TheDataFolder if it does not exist
+# adjust directory paths from the defaults if they have been defined by an environmental variable if not passed on the command line (only in lnd-grpc-test for now) and create TheDataFolder if it does not exist
 ################################################################
 
-if TheDataFolder != str(Path.home())+'/.dc/' and EnvironmentPopulated('DC_DATADIR'):
+if TheDataFolder == str(Path.home())+'/.dc/' and EnvironmentPopulated('DC_DATADIR'):
 	TheDataFolder=environ.get('DC_DATADIR')
 MadeNewDataFolder=MakeFolderIfItDoesNotExist(TheDataFolder)
 
 
 if EnvironmentPopulated('DC_DATAARCHIVEDIR'):
-	TheDataArchiveFolder=environ.get('DC_DATAARCHIVEDIR')
+	TheDataArchiveFolder=Path(environ.get('DC_DATAARCHIVEDIR'))
 else:
-	TheDataArchiveFolder=TheDataFolder+'DataArchive/'
+	TheDataArchiveFolder=Path(TheDataFolder) / 'DataArchive'
 
 ################################################################
 
@@ -264,76 +264,119 @@ logger.info('--------------------- startup ! ---------------------')
 ################################################################
 
 
-def StatusPrint(Meter,GUI,SellOfferTerms,PaymentsReceived,SalePeriods,MaxAuthorizedRateInterpolator=None):
+class LogData:
 
-	# want all time references to be exactly the same, so use this moment as the reference.
-	CurrentTime=datetime.now()
+	def __init__(self,Meter,GUI):
 
-	## write data to the console/log file for live monitoring##
+		# assign variables passed on initialization to the class
+		self.Meter=Meter
+		self.GUI=GUI
 
-	StatusMessage  = ''
-	StatusMessage += 'Power: '+RoundAndPadToString(Meter.Power,0)+' W,   '
-	StatusMessage += 'Volts: '+RoundAndPadToString(Meter.Volts,2)+',   '
-	StatusMessage += 'Amps: '+RoundAndPadToString(Meter.Amps,2)
-	StatusMessage += '\n'
-	StatusMessage += 'Energy Received: '+ RoundAndPadToString(Meter.EnergyDelivered,0)+' W*hours,   '
-	StatusMessage += 'Energy Cost: '+RoundAndPadToString(Meter.EnergyCost,0)+' sats'
-	StatusMessage += '\n'
-	StatusMessage += 'Required Rate: '+RoundAndPadToString(Meter.RecentRate*1000,0)+' sat/(kW*hour),   '
-	if MaxAuthorizedRateInterpolator is not None:
-		StatusMessage += 'Max Authorized Rate: '+RoundAndPadToString(MaxAuthorizedRateInterpolator(CurrentTime.timestamp())*1000,0)+' sat/(kW*hour)'
-	StatusMessage += '\n'
-	StatusMessage += 'Sale Period: ['
-	StatusMessage += FullDateTimeString(SellOfferTerms['OfferStartTime'])+' <~~> '
-	StatusMessage += FullDateTimeString(SellOfferTerms['OfferStopTime'])+'],  '
-	StatusMessage += 'Remaining:'+FormatTimeDeltaToPaddedString(SellOfferTerms['OfferStopTime']-CurrentTime.timestamp())+',  '
-	StatusMessage += 'Period #:'+RoundAndPadToString(SalePeriods,0)
-	StatusMessage += '\n'
-	StatusMessage += 'Total Payments: '+RoundAndPadToString(Meter.EnergyPayments,0)+' sats,   '
-	StatusMessage += 'Number Payments: '+RoundAndPadToString(PaymentsReceived,0)+',   '
-	StatusMessage += 'Session Time: '+GUI.ChargeTimeText
-	StatusMessage  = '\n' + indent(StatusMessage,' '*30)	#*35)
-	StatusMessage += '\n'
-	TimeStampedPrint(StatusMessage)
+		# prepare directories
+		if not TheDataLogFolder.is_dir():
+			logger.info(str(TheDataLogFolder)+' does not exist, so creating it and any needed parents')
+			TheDataLogFolder.mkdir(parents=True)
+
+		# open the file handle
+		self.DataLogFile='DataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt'		# give a new filename that has the time in which the file was created (which is approximately when the session was started (within some milliseconds)).
+		logger.debug('opening DataLogFileHandle for '+self.DataLogFile)
+		self.DataLogFileHandle = (TheDataLogFolder / self.DataLogFile).open("w", buffering=1)		# open for writing and line buffer writing. don't think this flushes OS filesystem buffers too. might want to add that down below after each write?????
+
+		# now that the file handle has been created, write the column headers on the first line
+		ColumnHeaders  = ''
+		ColumnHeaders += 'UnixTime'				+ '\t'
+		ColumnHeaders += 'DateTime'				+ '\t'
+		ColumnHeaders += 'SessionTime'				+ '\t'
+		ColumnHeaders += 'SalePeriodTimeRemaining[sec]'		+ '\t'
+		ColumnHeaders += 'SalePeriodNumber'			+ '\t'
+		ColumnHeaders += 'Power[W]'				+ '\t'
+		ColumnHeaders += 'Volts'				+ '\t'
+		ColumnHeaders += 'Amps'					+ '\t'
+		ColumnHeaders += 'EnergyDelivered[Wh]'			+ '\t'
+		ColumnHeaders += 'Rate[sat/Wh]'				+ '\t'
+		ColumnHeaders += 'MaxAuthorizedRate[sat/Wh]'		+ '\t'
+		ColumnHeaders += 'EnergyCost[sat]'			+ '\t'
+		ColumnHeaders += 'TotalPaymentAmount[sat]'		+ '\t'
+		ColumnHeaders += 'TotalNumberOfPayments'		+ '\t'
+		ColumnHeaders += '\n'
+		self.DataLogFileHandle.write(ColumnHeaders)
+
+
+
+
+	def LogTabularDataAndMessages(self):
+
+		# want all time references to be exactly the same, so use this moment as the reference.
+		CurrentTime=datetime.now()
+
+		## write data to the console/log file for live monitoring##
+
+		StatusMessage  = ''
+		StatusMessage += 'Power: '+RoundAndPadToString(self.Meter.Power,0)+' W,   '
+		StatusMessage += 'Volts: '+RoundAndPadToString(self.Meter.Volts,2)+',   '
+		StatusMessage += 'Amps: '+RoundAndPadToString(self.Meter.Amps,2)
+		StatusMessage += '\n'
+		StatusMessage += 'Energy Received: '+ RoundAndPadToString(self.Meter.EnergyDelivered,0)+' W*hours,   '
+		StatusMessage += 'Energy Cost: '+RoundAndPadToString(self.Meter.EnergyCost,0)+' sats,   '
+		StatusMessage += 'Credit Remaining: ' + RoundAndPadToString(self.Meter.EnergyPayments-self.Meter.EnergyCost,0)+' sats'
+		StatusMessage += '\n'
+		StatusMessage += 'Required Rate: '+RoundAndPadToString(self.Meter.RecentRate*1000,0)+' sat/(kW*hour),   '
+		if self.Meter.BuyOfferTerms['RateInterpolator'] is not None:
+			StatusMessage += 'Max Authorized Rate: '+RoundAndPadToString(self.Meter.BuyOfferTerms['RateInterpolator'](CurrentTime.timestamp())*1000,0)+' sat/(kW*hour)'
+		StatusMessage += '\n'
+		StatusMessage += 'Sale Period: ['
+		StatusMessage += FullDateTimeString(self.Meter.SellOfferTerms['OfferStartTime'])+' <~~> '
+		StatusMessage += FullDateTimeString(self.Meter.SellOfferTerms['OfferStopTime'])+'],  '
+		StatusMessage += 'Remaining:'+FormatTimeDeltaToPaddedString(self.Meter.SellOfferTerms['OfferStopTime']-CurrentTime.timestamp())+',  '
+		StatusMessage += 'Period #:'+RoundAndPadToString(self.Meter.SalePeriods,0)
+		StatusMessage += '\n'
+		StatusMessage += 'Total Payments: '+RoundAndPadToString(self.Meter.EnergyPayments,0)+' sats,   '
+		StatusMessage += 'Number Payments: '+RoundAndPadToString(self.Meter.NumberOfPaymentsReceived,0)+',   '
+		StatusMessage += 'Session Time: '+self.GUI.ChargeTimeText
+		StatusMessage  = '\n' + indent(StatusMessage,' '*30)	#*35)
+		StatusMessage += '\n'
+		logger.info(StatusMessage)
 #TODO: add some of this information to the GUI that is not already there
 
 
 
-	## write data to a TAB delimited text file for data analysis ##
+		## write data to a TAB delimited text file for data analysis ##
 
-	# date_time is redundant with unix_time (but make the log file easier to read when just casually looking at it) since can use datetime.datetime.fromtimestamp(unix_time) to easily get year,month,day,hour,minute,second for doing statistics on.
-	# Session Time is also provided for reference, but can be calculated by subtracting each row's unix_time from the first row's unix_time.
+		# date_time is redundant with unix_time (but make the log file easier to read when just casually looking at it) since can use datetime.datetime.fromtimestamp(unix_time) to easily get year,month,day,hour,minute,second for doing statistics on.
+		# Session Time is also provided for reference, but can be calculated by subtracting each row's unix_time from the first row's unix_time.
 
+		DataString = ''
+		DataString += RoundAndPadToString(CurrentTime.timestamp(),4,ShowThousandsSeparator=False)		+ '\t'		# unix_time
+		DataString += CurrentTime.strftime('%Y.%m.%d--%H.%M.%S.%f')						+ '\t'		# date_time
+		DataString += self.GUI.ChargeTimeText									+ '\t'		# Session Time
+		DataString += RoundAndPadToString(self.Meter.SellOfferTerms['OfferStopTime']-CurrentTime.timestamp(),4)		+ '\t'		# Sale Period Time Remaining (seconds with thousands separator)
+		DataString += RoundAndPadToString(self.Meter.SalePeriods,0)							+ '\t'		# Sale Period Number
 
-	DataString = ''
-	DataString += RoundAndPadToString(CurrentTime.timestamp(),4,ShowThousandsSeparator=False)		+ '\t'		# unix_time
-	DataString += CurrentTime.strftime('%Y.%m.%d--%H.%M.%S.%f')						+ '\t'		# date_time
-	DataString += GUI.ChargeTimeText									+ '\t'		# Session Time
-	DataString += RoundAndPadToString(SellOfferTerms['OfferStopTime']-CurrentTime.timestamp(),4)		+ '\t'		# Sale Period Time Remaining (seconds with thousands separator)
-	DataString += RoundAndPadToString(SalePeriods,0)							+ '\t'		# Sale Period Number
+		DataString += RoundAndPadToString(self.Meter.Power,5)							+ '\t'		# Power [W]
+		DataString += RoundAndPadToString(self.Meter.Volts,3)							+ '\t'		# Volts
+		DataString += RoundAndPadToString(self.Meter.Amps,3)								+ '\t'		# Amps
+		DataString += RoundAndPadToString(self.Meter.EnergyDelivered,2)						+ '\t'		# EnergyDelivered [W*hours]
 
-	DataString += RoundAndPadToString(Meter.Power,5)							+ '\t'		# Power [W]
-	DataString += RoundAndPadToString(Meter.Volts,3)							+ '\t'		# Volts
-	DataString += RoundAndPadToString(Meter.Amps,3)								+ '\t'		# Amps
-	DataString += RoundAndPadToString(Meter.EnergyDelivered,2)						+ '\t'		# EnergyDelivered [W*hours]
+		DataString += RoundAndPadToString(self.Meter.RecentRate,4)							+ '\t'		# Rate [sat/(W*hour)]
+		if self.Meter.BuyOfferTerms['RateInterpolator'] is not None:
+			DataString += RoundAndPadToString(self.Meter.BuyOfferTerms['RateInterpolator'](CurrentTime.timestamp()),4)	+ '\t'		# Max Authorized Rate [sat/(W*hour)]
+		else:
+			DataString += RoundAndPadToString(-1,4)								+ '\t'		# N/A for the seller
 
-	DataString += RoundAndPadToString(Meter.RecentRate,4)							+ '\t'		# Rate [sat/(W*hour)]
-	if MaxAuthorizedRateInterpolator is not None:
-		DataString += RoundAndPadToString(MaxAuthorizedRateInterpolator(CurrentTime.timestamp()),4)	+ '\t'		# Max Authorized Rate [sat/(W*hour)]
-	else:
-		DataString += RoundAndPadToString(-1,4)								+ '\t'		# N/A for the seller
+		DataString += RoundAndPadToString(self.Meter.EnergyCost,0)							+ '\t'		# EnergyCost [sat]
+		DataString += RoundAndPadToString(self.Meter.EnergyPayments,0)						+ '\t'		# Total Payment Amount [sat]
+		DataString += RoundAndPadToString(self.Meter.NumberOfPaymentsReceived,0)							+ '\t'		# Total Number of Payments
 
-	DataString += RoundAndPadToString(Meter.EnergyCost,0)							+ '\t'		# EnergyCost [sat]
-	DataString += RoundAndPadToString(Meter.EnergyPayments,0)						+ '\t'		# Total Payment Amount [sat]
-	DataString += RoundAndPadToString(PaymentsReceived,0)							+ '\t'		# Total Number of Payments
-
-	DataLogFileHandle.write(DataString+'\n')
-	DataLogFileHandle.flush()		# skip this by changing the buffer mode of the open function?
-
-	# where/when to close this file handle ?????
+		self.DataLogFileHandle.write(DataString+'\n')
 
 
+	def close(self):
+		logger.debug('closing DataLogFileHandle for '+self.DataLogFile)
+		self.DataLogFileHandle.close()
 
+	def __del__(self):
+		logger.debug('LogData instance being garbage collected')
+		self.close()		# try to close in case it is not already closed (running .close() a second time doesn't hurt and doesn't cause an error either).
 
 
 
@@ -581,59 +624,18 @@ else:
 # needs to be after loading configuration since setLevel() needs to know the value of DebugLevel
 logger.info('DataFolder set to '+TheDataFolder)
 if MadeNewDataFolder:
-	# couldn't write this until there was a place to write it to, so had to remember and then write when it was possible.
+	# couldn't write this until there was a place to write it to, so had to remember and then write when it was possible and setLevel() is already run.
 	logger.info(TheDataFolder+' did not exist, so created it!')
 
-logger.info('DataArchiveFolder set to '+TheDataArchiveFolder)
-if MakeFolderIfItDoesNotExist(TheDataArchiveFolder):
-	logger.info(TheDataArchiveFolder+' does not exist, so creating it')
 
+logger.info('DataArchiveFolder set to '+str(TheDataArchiveFolder))		# not creating this folder here. instead, anything that needs to write here is responsible for making sure it exists.
+
+TheDataLogFolder=TheDataArchiveFolder / 'DataLogs'
+logger.info('TheDataLogFolder set to '+str(TheDataLogFolder))		# not creating this folder here. instead, anything that needs to write here is responsible for making sure it exists.
 
 
 
 ################################################################
-# prepare to write the DataLogFile
-################################################################
-
-# TODO: restructure this section. this is run by every script that imports this module (such as SmartLoads.py) even when it isn't needed.
-# it doesn't really hurt much to do it in every script since all it is doing is opening the file and writing the header row
-# but that's a bit sloppy to have a different process write the header file and then leave the file open for writing for no reason.
-
-TheDataLogFolder=TheDataArchiveFolder#+'/DataLog/'
-
-logger.info('TheDataLogFolder set to '+TheDataLogFolder)
-if MakeFolderIfItDoesNotExist(TheDataLogFolder):
-	logger.info(TheDataLogFolder+' does not exist, so creating it')
-
-# open the output file --- need to fix this so that it re-opens a new file every day, but right now, it just sticks with the file created during the time it was started up.
-#DataLogFile='DataLog-'+datetime.now().strftime('%Y.%m.%d--%H.%M.%S.%f')+'.txt'
-DataLogFile='DataLog'+'.txt'
-
-ColumnHeaders  = ''
-if not isfile(TheDataLogFolder+DataLogFile):
-	ColumnHeaders += 'UnixTime'				+ '\t'
-	ColumnHeaders += 'DateTime'				+ '\t'
-	ColumnHeaders += 'SessionTime'				+ '\t'
-	ColumnHeaders += 'SalePeriodTimeRemaining[sec]'		+ '\t'
-	ColumnHeaders += 'SalePeriodNumber'			+ '\t'
-	ColumnHeaders += 'Power[W]'				+ '\t'
-	ColumnHeaders += 'Volts'				+ '\t'
-	ColumnHeaders += 'Amps'					+ '\t'
-	ColumnHeaders += 'EnergyDelivered[Wh]'			+ '\t'
-	ColumnHeaders += 'Rate[sat/Wh]'				+ '\t'
-	ColumnHeaders += 'MaxAuthorizedRate[sat/Wh]'		+ '\t'
-	ColumnHeaders += 'EnergyCost[sat]'			+ '\t'
-	ColumnHeaders += 'TotalPaymentAmount[sat]'		+ '\t'
-	ColumnHeaders += 'TotalNumberOfPayments'		+ '\t'
-	ColumnHeaders += '\n'
-
-DataLogFileHandle = open(TheDataLogFolder+DataLogFile, "a")
-
-DataLogFileHandle.write(ColumnHeaders)		#if file already existed, ColumnHeaders will be empty, so nothing will be written.
-DataLogFileHandle.flush()
-
-################################################################
-
 
 
 

@@ -20,7 +20,7 @@ import dc
 dc.mode='car'
 
 # dc.common must be the second imported module because it reads the config
-from dc.common import ConfigFile, m3, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, TWCAN, lnd, GUI, logger
+from dc.common import ConfigFile, m3, getCANvalue, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, TWCAN, lnd, GUI, logger, LogData
 
 from time import sleep,time
 from datetime import datetime,timedelta
@@ -89,6 +89,7 @@ CurrentRate=0
 RequiredPaymentAmount=0
 EnergyDelivered=0
 EnergyPaidFor=0
+NumberOfPaymentsReceived=0
 
 BigStatus='Insert Charge Cable Into Car'
 SmallStatus='Waiting For Charge Cable To Be Inserted'
@@ -151,6 +152,20 @@ ReceiveInvoicesThread.start()			#starts .run() (and maybe some other stuff?)
 
 
 
+# hack: create an empty Meter class to use as a placeholder until the real Meter function is ported from GRID to EV so that LogData can work
+class Meter: pass
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -165,14 +180,19 @@ try:
 		GUI.Power=Power
 		GUI.BigStatus=BigStatus
 		GUI.SmallStatus=SmallStatus
+
 		GUI.EnergyDelivered=EnergyDelivered
-		GUI.EnergyPayments=EnergyPaidFor*CurrentRate
 		GUI.EnergyCost=EnergyDelivered*CurrentRate
+		GUI.CreditRemaining=(EnergyPaidFor-EnergyDelivered)*CurrentRate
+
 		GUI.RecentRate=CurrentRate
 		GUI.RequiredPaymentAmount=RequiredPaymentAmount
 		GUI.ChargeStartTime=ChargeStartTime
 		GUI.Connected=Proximity
 		GUI.MaxAmps=MaxAmps
+
+		GUI.SettledPayments=EnergyPaidFor*CurrentRate
+
 
 
 		if GUI._stop_event.is_set():
@@ -220,9 +240,17 @@ try:
 			SmallStatus=''
 
 			CurrentTime=time()
+			TotalWhoursCharged_start=-1
 			EnergyDelivered=0
+			EnergyPaidFor=0
+			NumberOfPaymentsReceived=0
+			ChargeStartTime=datetime.now()
+			AcceptedRate=False
 
-		elif Proximity:
+			DataLogger=LogData(Meter,GUI)
+
+
+		elif Proximity:			# already have Proximity, but something changed.
 
 			if AC_CHARGE_ENABLED and SWCANActive:
 				if not SWCAN_Relay.is_lit:
@@ -243,6 +271,7 @@ try:
 
 			if not SWCANActive:
 				Proximity=False
+				DataLogger.close()
 				logger.debug("plug removed\n\n\n")
 				BigStatus='Charge Cable Removed'
 				SmallStatus=''
@@ -254,8 +283,9 @@ try:
 
 
 
-
-
+		#####################################################################
+		# don't need proximity for these things since they come from TWCAN
+		#####################################################################
 
 		#can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
 		#also, if picking up on SW CAN, need to do it after the "if Proximity:" statement below.
@@ -273,6 +303,11 @@ try:
 			if getCANvalue(messageTW.data,'ID32CCC_logData','CC_logIndex') == 'Mux1':		#Signals available in the message seem to be dependent on this value.
 				Amps=getCANvalue(messageTW.data,'ID32CCC_logData','CC_conn1Current')
 		#END can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
+
+		#####################################################################
+
+
+
 
 
 
@@ -292,36 +327,89 @@ try:
 #need to do more testing and also measure CPU usage.
 
 
-			if AcceptedRate and TotalWhoursCharged !=-1:
+
+
+
+
+
+
+			#################################################################
+			# do this stuff before testing for AcceptedRate because want to
+			# still monitor power and energy if not paying via distributed charge.
+			#################################################################
+
+			if TotalWhoursCharged !=-1:
+
+				if TotalWhoursCharged_start==-1:	# just plugged in
+					TotalWhoursCharged_start=TotalWhoursCharged
 
 				#not yet used. need to add to the GUI or some other kind of report. can help understand how much energy is wasted warming the battery up as well as charger
 				#efficinecy since the Tesla GUI is very misleading on how much energy you are actually using
 				EnergyAddedToBattery=TotalWhoursCharged-TotalWhoursCharged_start
 
-				if (Volts is not None) and (Amps is not None):		#can't start doing anything until an initial voltage and current reading is obtained on the can bus because need that to decide when to pay.
 
-					PreviousTime=CurrentTime
-					CurrentTime=time()
-					deltaT=(CurrentTime-PreviousTime)/3600		#hours, small error on first loop when Proximity is initially True
+			if (Volts is not None) and (Amps is not None):		#can't start doing anything until an initial voltage and current reading is obtained on the can bus because need that to decide when to pay.
 
-					Power=Volts*Amps
-					EnergyDelivered+=deltaT*Power		#W*hours
+				PreviousTime=CurrentTime
+				CurrentTime=time()
+				deltaT=(CurrentTime-PreviousTime)/3600		#hours, small error on first loop when Proximity is initially True
+
+				Power=Volts*Amps
+				EnergyDelivered+=deltaT*Power		#W*hours
 
 
+				#################################################
+				# hack: define values for the Meter class to use
+				# as a placeholder until the real Meter class
+				# is ported from GRID to EV so that LogData can work
+				#################################################
+
+				Meter.Power=Power
+				Meter.Volts=Volts
+				Meter.Amps=Amps
+				Meter.EnergyDelivered=EnergyDelivered
+				Meter.EnergyCost=EnergyDelivered*CurrentRate
+
+				Meter.RecentRate=CurrentRate
+				Meter.SalePeriods = 1
+
+				Meter.SellOfferTerms =	{
+								'OfferStartTime'	: time(),
+								'OfferStopTime'		: time(),
+							}
+
+				Meter.BuyOfferTerms = 	{
+								'RateInterpolator'	: None,
+							}
+				#################################################
+
+
+			#################################################################
+
+
+				if AcceptedRate:
 					if len(ReceiveInvoicesThread.InvoiceQueue)>0:		#invoices are waiting to be paid
+
+						oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft()
 						try:
 							logger.debug("trying to decode the invoice")
-							oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft()
-
 							AmountRequested=lnd.decode_payment_request(oldestInvoice).num_satoshis		#consider making timeout shorter as noted below for the other exception because it just hangs up the script and the GUI never updates while this is happening.
-							logger.debug("decoded the invoice")
+						except:
+							logger.exception("tried decoding the invoice but there was probably a network connection issue")
+							ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
 
+							# TODO: move can bus reading to a seperate thread and increase the sleep time here to 1 (otherwise tons of messages get in the que and the script is really slow to process through them and won't pick up thinks like proximity change for a really long time)
+							sleep(0.01)
+						else:
+							logger.debug("decoded the invoice")
 							logger.info("seller wants to be paid "+str(AmountRequested)+" satoshis")
 							SmallStatus='Payment Requested'
-							AllowedError=(0.025-0.10)/(20-5)*(Amps-5)+0.1       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
+
+							AllowedError=(0.025-0.20)/(48-5)*(Amps-5)+0.2       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
+# note, this formula assumes the current is constant throughout the session. if the current is initially low and then goes up, it might not work because the new current is used for all former error.
 
 							if (		# TODO as noted elsewhere, need rework this to be in sat not W*hour
-									((EnergyPaidFor-EnergyDelivered)<WhoursPerPayment*0.70*2*4+EnergyDelivered*AllowedError+75)			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times. ------added an extra *4 to see if that helps (and it seems to be)
+									((EnergyPaidFor-EnergyDelivered)<(WhoursPerPayment*0.70*2+(EnergyDelivered*AllowedError+75)))			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times.
 										and
 									(
 										(AmountRequested<=RequiredPaymentAmount)			#not asking for too much payment
@@ -335,84 +423,88 @@ try:
 								):										#if all good, then it's time to send another invoice
 
 								try:
-
 									logger.debug("sending payment")
 #should check to make sure the "expiry" has not passed on the invoice yet before paying????
 									lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
-
-									# TODO as noted elsewhere, need rework this to be in sat not W*hour
-									EnergyPaidFor+=AmountRequested/CurrentRate
-
-									logger.info("sent payment for "+str(AmountRequested)+" satoshis")
-									ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=round((datetime.now()-ChargeStartTime).total_seconds())))	#round to the nearest second, then format as a zero padded string
-									logger.info('WhoursReceived: '+RoundAndPadToString(EnergyDelivered,1)+',   Volts: '+RoundAndPadToString(Volts,2)+',   Amps: '+RoundAndPadToString(Amps,2)+',   ChargeSessionTime: '+ChargeTimeText)
-
-									SmallStatus='Payment Sent'
-
 								except:
 #lnd.send_payment doesn't fail (raise a python exception) if the payment fails to route, only if lnd.send_payment can't contact the lnd node. so, need to check the response from lnd.send_payment to see what actually happened
 #also, seems to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting.
-									logger.error("tried sending payment but there was probably a network connection issue")
-									sleep(.25)
+									logger.exception("tried sending payment but there was probably a network connection issue")
+									ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
+
+									# TODO: move can bus reading to a seperate thread and increase the sleep time here to 1 (otherwise tons of messages get in the que and the script is really slow to process through them and won't pick up thinks like proximity change for a really long time)
+									sleep(0.01)
+								else:
+									logger.info("sent payment for "+str(AmountRequested)+" satoshis")
+
+									# TODO as noted elsewhere, need rework this to be in sat not W*hour
+									EnergyPaidFor+=AmountRequested/CurrentRate
+									NumberOfPaymentsReceived+=1
+
+									#################################################
+									# hack: define values for the Meter class to use
+									# as a placeholder until the real Meter class
+									# is ported from GRID to EV so that LogData can work
+									#################################################
+
+									Meter.EnergyPayments = EnergyPaidFor*CurrentRate
+									Meter.NumberOfPaymentsReceived = NumberOfPaymentsReceived
+									#################################################
+
+									DataLogger.LogTabularDataAndMessages()
+									SmallStatus='Payment Sent'
 
 							else:
 								#seller is asking for payment to quickly, waiting until they deliver energy that was agreed upon.
 								#if they aren't happy and think they delivered enough, they will shut down.
-								#currently, the buyer will tolerate up to 20% of error. the seller tolerates 30%
-								#because they need to give time for a payment to actually be made.
-								#need to do something if AmountRequested>RequiredPaymentAmount and EnergyPaidFor>0
-
+								#currently, the buyer and seller will both tolerate some error.
+								#because they need to give time for a payment to actually be made and account for their different instrumentation.
+								#need to do something if AmountRequested>RequiredPaymentAmount and EnergyPaidFor>0 ????????????????? don't remember what this comment was about.....
 
 								ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
-	#							logger.debug("not yet time to pay, waiting")
+								logger.debug("not yet time to pay, waiting")
 
-						except:
-							logger.error("tried decoding the invoice but there was probably a network connection issue")
-							ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
+								# TODO: move can bus reading to a seperate thread and increase the sleep time here to 1 (otherwise tons of messages get in the que and the script is really slow to process through them and won't pick up thinks like proximity change for a really long time)
+								sleep(0.01)
 
 					else:
 #						logger.debug("waiting for next invoice")
 						pass
 
 
+				elif (message is not None) and (message.arbitration_id == 1998):				#offer received
+					WhoursPerPayment=int.from_bytes(message.data[0:4],byteorder='little')			#Whours_offered
+					RequiredPaymentAmount=int.from_bytes(message.data[4:8],byteorder='little')		#for_sat
+					CurrentRate=RequiredPaymentAmount/WhoursPerPayment					#1/(Whours_offered/for_sat)
 
-			elif (message is not None) and (message.arbitration_id == 1998) and TotalWhoursCharged !=-1:	#offer received
-				WhoursPerPayment=int.from_bytes(message.data[0:4],byteorder='little')			#Whours_offered
-				RequiredPaymentAmount=int.from_bytes(message.data[4:8],byteorder='little')		#for_sat
-				CurrentRate=RequiredPaymentAmount/WhoursPerPayment					#1/(Whours_offered/for_sat)
+					if (CurrentRate<MaxRate) and (RequiredPaymentAmount<MaxRequiredPaymentAmount):		#accept the rate, until SWCAN goes down. probably need to upgrade to allow rate changes during a charging session, but for now, this is how it works.
+						ReceiveInvoicesThread.InvoiceQueue.clear()		#all previous invoices are no longer be valid as far as the buyer is concerned, so ignore them
 
-				if (CurrentRate<MaxRate) and (RequiredPaymentAmount<MaxRequiredPaymentAmount):		#accept the rate, until SWCAN goes down. probably need to upgrade to allow rate changes during a charging session, but for now, this is how it works.
-					ReceiveInvoicesThread.InvoiceQueue.clear()		#all previous invoices are no longer be valid as far as the buyer is concerned, so ignore them
-					EnergyDelivered=0
-					EnergyPaidFor=0
-					AcceptedRate=True
-					TotalWhoursCharged_start=TotalWhoursCharged
+						AcceptedRate=True
 
-					#print('getting ready to accept an offer')
+						#print('getting ready to accept an offer')
 
-					SWCAN.send(can_Message(arbitration_id=1999,data=[True],is_extended_id=False))
-					logger.info("accepted an offer of "+RoundAndPadToString(WhoursPerPayment,1)+" W*hour for a payment of "+str(RequiredPaymentAmount)+" satoshis ["+RoundAndPadToString(CurrentRate,1)+" satoshis/(W*hour)]")
-
-					ChargeStartTime=datetime.now()
-
-					BigStatus='Charging'
-					SmallStatus='Accepted Sale Terms'
+						SWCAN.send(can_Message(arbitration_id=1999,data=[True],is_extended_id=False))
+						logger.info("accepted an offer of "+RoundAndPadToString(WhoursPerPayment,1)+" W*hour for a payment of "+str(RequiredPaymentAmount)+" satoshis ["+RoundAndPadToString(CurrentRate,1)+" satoshis/(W*hour)]")
 
 
-				else:					#don't accept the rate, it's too high. wait and see if a lower offer is made.
-					SWCAN.send(can_Message(arbitration_id=1999,data=[False],is_extended_id=False))
-					logger.info("rate or payment amount too high, not accepting")
-					SmallStatus='Rejected Sale Terms, Waiting for a Better Offer'
-#provide more detail in outputs on why was not accepted
+						BigStatus='Charging'
+						SmallStatus='Accepted Sale Terms'
+
+
+					else:					#don't accept the rate, it's too high. wait and see if a lower offer is made.
+						SWCAN.send(can_Message(arbitration_id=1999,data=[False],is_extended_id=False))
+						logger.info("rate or payment amount too high, not accepting")
+						SmallStatus='Rejected Sale Terms, Waiting for a Better Offer'
+	#provide more detail in outputs on why was not accepted
 
 
 
-			else:
-				#continue to wait for an offer or TotalWhoursCharged
-				pass
+				else:
+					#continue to wait for an offer
+					pass
 
-		else:
-			AcceptedRate=False
+
 
 
 

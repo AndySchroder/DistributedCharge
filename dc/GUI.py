@@ -62,7 +62,6 @@ class GUIClass(threading.Thread):
 		self.BigStatus=''
 		self.SmallStatus=''
 		self.EnergyDelivered=0
-		self.EnergyPayments=0
 
 		self.SettledPayments=0
 		self.HeldPayments=0
