@@ -31,7 +31,12 @@ import sys
 
 from collections import deque
 
+
+
+
+
 from threading import Thread, Event
+from bolt11.core import decode
 
 
 
@@ -489,91 +494,82 @@ try:
 				if AcceptedRate:
 					if len(ReceiveInvoicesThread.InvoiceQueue)>0:		#invoices are waiting to be paid
 
-						oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft()
-						try:
-							logger.debug("trying to decode the invoice")
-							AmountRequested=lnd.decode_payment_request(oldestInvoice).num_satoshis		#consider making timeout shorter as noted below for the other exception because it just hangs up the script and the GUI never updates while this is happening.
-						except:
-							logger.exception("tried decoding the invoice but there was probably a network connection issue")
-							ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
+						oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft().decode()		# SWCAN_ISOTP receives data as binary, so need to run .decode() to convert it back to a string.
+						logger.debug("decoding "+oldestInvoice)
+						AmountRequested=int(decode(oldestInvoice).amount/1000)
+						logger.info("seller wants to be paid "+str(AmountRequested)+" satoshis")
+						SmallStatus='Payment Requested'
 
-							sleep(2)
-						else:
-							logger.debug("decoded the invoice")
-							logger.info("seller wants to be paid "+str(AmountRequested)+" satoshis")
-							SmallStatus='Payment Requested'
-
-							AllowedError=(0.025-0.20)/(48-5)*(TWCANMessages.Amps-5)+0.2       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
+						AllowedError=(0.025-0.20)/(48-5)*(TWCANMessages.Amps-5)+0.2       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
 # note, this formula assumes the current is constant throughout the session. if the current is initially low and then goes up, it might not work because the new current is used for all former error.
 
-							if (		# TODO as noted elsewhere, need rework this to be in sat not W*hour
-									((EnergyPaidFor-EnergyDelivered)<(WhoursPerPaymentAccepted*0.70*2+(EnergyDelivered*AllowedError+75)))			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times.
-										and
+						if (		# TODO as noted elsewhere, need rework this to be in sat not W*hour
+								((EnergyPaidFor-EnergyDelivered)<(WhoursPerPaymentAccepted*0.70*2+(EnergyDelivered*AllowedError+75)))			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times.
+									and
+								(
+									(AmountRequested<=RequiredPaymentAmountAccepted)			#not asking for too much payment
+										or
 									(
-										(AmountRequested<=RequiredPaymentAmountAccepted)			#not asking for too much payment
-											or
-										(
-											(AmountRequested<=2*RequiredPaymentAmountAccepted)
-												and
-											(EnergyPaidFor==0)					#first payment allows 2x normal payment amount.
-										)
+										(AmountRequested<=2*RequiredPaymentAmountAccepted)
+											and
+										(EnergyPaidFor==0)					#first payment allows 2x normal payment amount.
 									)
-								):										#if all good, then it's time to send another invoice
+								)
+							):										#if all good, then it's time to send another invoice
 
-								try:
-									LNDBalance=lnd.channel_balance().local_balance.sat
-									logger.info('LND (off chain) account balance :  '+RoundAndPadToString(LNDBalance,0)+' sat')
-								except:
-									logger.exception('tried getting LND (off chain) account balance but there was probably a network connection issue.')
-									sleep(2)
-								else:
-									if LNDBalance<AmountRequested*(1+MaxFeeFraction):
-										logger.error('LND (off chain) account balance is too low')
-										sleep(20)
-									else:
-										try:
-											logger.debug("sending payment")
-		#should check to make sure the "expiry" has not passed on the invoice yet before paying????
-											lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
-										except:
-		#lnd.send_payment doesn't fail (raise a python exception) if the payment fails to route, only if lnd.send_payment can't contact the lnd node. so, need to check the response from lnd.send_payment to see what actually happened
-		#also, seems to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting.
-											logger.exception("tried sending payment but there was probably a network connection issue")
-											ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
-
-											sleep(2)
-										else:
-											logger.info("sent payment for "+str(AmountRequested)+" satoshis")
-											logger.info('total outstanding invoices is now '+str(len(ReceiveInvoicesThread.InvoiceQueue)))
-
-											# TODO as noted elsewhere, need rework this to be in sat not W*hour
-											EnergyPaidFor+=AmountRequested/CurrentRate
-											NumberOfPaymentsReceived+=1
-
-											#################################################
-											# hack: define values for the Meter class to use
-											# as a placeholder until the real Meter class
-											# is ported from GRID to EV so that LogData can work
-											#################################################
-
-											Meter.EnergyPayments = EnergyPaidFor*CurrentRate
-											Meter.NumberOfPaymentsReceived = NumberOfPaymentsReceived
-											#################################################
-
-											DataLogger.LogTabularDataAndMessages()
-											SmallStatus='Payment Sent'
-
-							else:
-								#seller is asking for payment to quickly, waiting until they deliver energy that was agreed upon.
-								#if they aren't happy and think they delivered enough, they will shut down.
-								#currently, the buyer and seller will both tolerate some error.
-								#because they need to give time for a payment to actually be made and account for their different instrumentation.
-								#need to do something if AmountRequested>RequiredPaymentAmountAccepted and EnergyPaidFor>0 ????????????????? don't remember what this comment was about.....
-
+							try:
+								LNDBalance=lnd.channel_balance().local_balance.sat
+								logger.info('LND (off chain) account balance :  '+RoundAndPadToString(LNDBalance,0)+' sat')
+							except:
+								logger.exception('tried getting LND (off chain) account balance but there was probably a network connection issue.')
 								ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
-								logger.debug("not yet time to pay, waiting")
-
 								sleep(2)
+							else:
+								if LNDBalance<AmountRequested*(1+MaxFeeFraction):
+									logger.error('LND (off chain) account balance is too low')
+									sleep(20)
+								else:
+									try:
+										logger.debug("sending payment")
+	#should check to make sure the "expiry" has not passed on the invoice yet before paying????
+										lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
+									except:
+	#lnd.send_payment doesn't fail (raise a python exception) if the payment fails to route, only if lnd.send_payment can't contact the lnd node. so, need to check the response from lnd.send_payment to see what actually happened
+	#also, seems to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting.
+										logger.exception("tried sending payment but there was probably a network connection issue")
+										ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
+										sleep(2)
+									else:
+										logger.info("sent payment for "+str(AmountRequested)+" satoshis")
+										logger.info('total outstanding invoices is now '+str(len(ReceiveInvoicesThread.InvoiceQueue)))
+
+										# TODO as noted elsewhere, need rework this to be in sat not W*hour
+										EnergyPaidFor+=AmountRequested/CurrentRate
+										NumberOfPaymentsReceived+=1
+
+										#################################################
+										# hack: define values for the Meter class to use
+										# as a placeholder until the real Meter class
+										# is ported from GRID to EV so that LogData can work
+										#################################################
+
+										Meter.EnergyPayments = EnergyPaidFor*CurrentRate
+										Meter.NumberOfPaymentsReceived = NumberOfPaymentsReceived
+										#################################################
+
+										DataLogger.LogTabularDataAndMessages()
+										SmallStatus='Payment Sent'
+
+						else:
+							#seller is asking for payment to quickly, waiting until they deliver energy that was agreed upon.
+							#if they aren't happy and think they delivered enough, they will shut down.
+							#currently, the buyer and seller will both tolerate some error.
+							#because they need to give time for a payment to actually be made and account for their different instrumentation.
+							#need to do something if AmountRequested>RequiredPaymentAmountAccepted and EnergyPaidFor>0 ????????????????? don't remember what this comment was about.....
+
+							logger.debug("not yet time to pay, waiting")
+							ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
+							sleep(2)
 
 					else:
 #						logger.debug("waiting for next invoice")
