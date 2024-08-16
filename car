@@ -26,7 +26,7 @@ from time import sleep,time
 from datetime import datetime,timedelta
 
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,SetPrintWarningMessages
-
+from textwrap import indent,TextWrapper
 import sys
 
 from collections import deque
@@ -42,7 +42,7 @@ from bolt11.core import decode
 
 
 
-
+from math import ceil
 
 
 
@@ -108,6 +108,22 @@ SmallStatus='Waiting For Charge Cable To Be Inserted'
 
 
 
+
+
+class DocumentWrapper(TextWrapper):
+	# inspired from https://stackoverflow.com/questions/1166317/python-textwrap-library-how-to-preserve-line-breaks/45287550#45287550
+	# keep original newlines and only wrap lines that are longer than the limit
+	def wrap(self, text):
+		split_text = text.split('\n')
+		lines = [line for para in split_text for line in TextWrapper.wrap(self, para)]
+		return lines
+
+
+
+
+
+
+
 class ReceiveInvoices(Thread):
 	#this class holds the InvoiceQueue object, receives invoices, operates in another thread in daemon mode, and will shutdown if the .stop() method is used.
 	#not sure if the socket should be opened and closed from within here or not. to be re-visited at a later time.
@@ -142,7 +158,7 @@ class ReceiveInvoices(Thread):
 				sleep(5)
 			else:
 				if NewInvoice is not None:
-					self.InvoiceQueue.append(NewInvoice)
+					self.InvoiceQueue.append(NewInvoice.decode())		# SWCAN_ISOTP receives data as binary, so need to run .decode() to convert it back to a string.
 					logger.info('new invoice received and added to the queue. total outstanding invoices is now '+str(len(self.InvoiceQueue)))
 			if self._stop_thread.is_set():
 				break
@@ -552,7 +568,7 @@ while True:
 				if AcceptedRate:
 					if len(ReceiveInvoicesThread.InvoiceQueue)>0:		#invoices are waiting to be paid
 
-						oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft().decode()		# SWCAN_ISOTP receives data as binary, so need to run .decode() to convert it back to a string.
+						oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft()
 						logger.debug("decoding "+oldestInvoice)
 						AmountRequested=int(decode(oldestInvoice).amount/1000)
 						logger.info("seller wants to be paid "+str(AmountRequested)+" satoshis")
@@ -588,17 +604,25 @@ while True:
 									sleep(20)
 								else:
 									try:
-										logger.debug("sending payment")
-	#should check to make sure the "expiry" has not passed on the invoice yet before paying????
-										lnd.send_payment(oldestInvoice)			#seems to block code execution until the payment is routed, or fails
+										logger.info("sending payment for "+str(AmountRequested)+" sat")
+
+# should check to make sure the "expiry" has not passed on the invoice yet before paying????
+# allow changing final_cltv_delta of the sent payment?
+# can to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting. might want to move this to another thread???
+
+										# send the payment and display updates as they are streamed during routing and settlement
+										for PaymentResponse in lnd.send_payment_v2(payment_request=oldestInvoice, fee_limit_sat=ceil(AmountRequested*MaxFeeFraction), timeout_seconds=25, allow_self_payment=True):
+											logger.debug('====================================================================================\n' + indent(DocumentWrapper(subsequent_indent='    ',width=80).fill(str(PaymentResponse)),' '*53))
+
+										if PaymentResponse.status != 2:
+											raise Exception('payment did not succeed, status is '+str(PaymentResponse.status))
+
 									except:
-	#lnd.send_payment doesn't fail (raise a python exception) if the payment fails to route, only if lnd.send_payment can't contact the lnd node. so, need to check the response from lnd.send_payment to see what actually happened
-	#also, seems to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting.
-										logger.exception("tried sending payment but there was probably a network connection issue")
+										logger.exception("tried sending payment but there was an issue")
 										ReceiveInvoicesThread.InvoiceQueue.appendleft(oldestInvoice)		#put the invoice back in the queue
 										sleep(2)
 									else:
-										logger.info("sent payment for "+str(AmountRequested)+" satoshis")
+										logger.info('sent payment: total fees = '+RoundAndPadToString(PaymentResponse.fee_sat,0)+' [sat] ('+RoundAndPadToString(100*(PaymentResponse.fee_sat/AmountRequested),2)+'%)')
 										logger.info('total outstanding invoices is now '+str(len(ReceiveInvoicesThread.InvoiceQueue)))
 
 										# TODO as noted elsewhere, need rework this to be in sat not W*hour
