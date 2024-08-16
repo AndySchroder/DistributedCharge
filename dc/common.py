@@ -15,7 +15,7 @@ from . import mode, TheConfigFile, TheDataFolder, LNDhost
 from pathlib import Path
 from os import makedirs,environ
 from os.path import isfile,isdir
-from helpers2 import RoundAndPadToString,TimeStampedPrint,FullDateTimeString,FormatTimeDeltaToPaddedString,SetPrintWarningMessages
+from helpers2 import RoundAndPadToString,FullDateTimeString,FormatTimeDeltaToPaddedString,SetPrintWarningMessages
 from textwrap import indent
 from threading import Thread
 from .SocketHelpers import PackTopicAndJSONAndSend
@@ -216,7 +216,7 @@ logfile_log_level="debug"
 FormatStringTemplate='%(TIMEDATECOLOR)s%(asctime)s%(color_off)s [%(color_on)s%(levelname)8s%(color_off)s, %(FUNCTIONNAMECOLOR)s%(funcName)8.8s%(color_off)s]:   %(message)s'
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
 console = logging.StreamHandler(sys.stdout)
@@ -430,7 +430,7 @@ class UpdateVariables(Thread):
 						# publish the rate via zmq so local devices can adjust their loads intelligently
 						# continuously send because new clients can connect at any time and they won't know the current rate and don't want them to have to wait a while.
 						PackTopicAndJSONAndSend(self.ZMQSocket,'Rate',self.Meter.RecentRate)		#note: using send_json even though just using a float because want to prepare for more complex messages
-						TimeStampedPrint('Published a rate of '+RoundAndPadToString(self.Meter.RecentRate*1000,0)+' sat/(kW*hour) to ZMQ subscribers')
+						logger.info('Published a rate of '+RoundAndPadToString(self.Meter.RecentRate*1000,0)+' sat/(kW*hour) to ZMQ subscribers')
 					else:
 						# don't wait, send the rate once it's been initialized
 						LoopCounter=0
@@ -542,20 +542,20 @@ class SMTPNotification(Thread):
 
 
 
-def TimeStampedPrintAndSmallStatusUpdate(Message,GUI):
+def LogAndSmallStatusUpdate(Message,GUI):
 	GUI.SmallStatus=Message
-	TimeStampedPrint(Message)
+	logger.debug(Message)
 
 
 def WaitForTimeSync(GUI):
 	GUI.BigStatus='Clock Not Set'
-	TimeStampedPrintAndSmallStatusUpdate('Waiting for clock to be synchronized with NTP server.',GUI)
+	LogAndSmallStatusUpdate('Waiting for clock to be synchronized with NTP server.',GUI)
 
 	while not SystemBus().get(".timedate1").NTPSynchronized:
 		sleep(0.1)
 
 	GUI.BigStatus='Clock Set'
-	TimeStampedPrintAndSmallStatusUpdate('Clock is now synchronized with NTP server.',GUI)
+	LogAndSmallStatusUpdate('Clock is now synchronized with NTP server.',GUI)
 
 
 
@@ -598,9 +598,6 @@ if	(
 	with open(TheDataFolder+TheConfigFile, 'r') as file:
 		ConfigFile=safe_load(file)
 
-
-	# need to use the function so that it can modify the value inside the imported module so that everything that imports TimeStampedPrint will get this value.
-	SetPrintWarningMessages(ConfigFile[PartyMappings[mode]]['PrintWarningMessages'])
 
 	# change the default value for the log file (standard output remains at INFO)
 	logfile.setLevel(ConfigFile[PartyMappings[mode]]['DebugLevel'].upper())
