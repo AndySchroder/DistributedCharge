@@ -16,7 +16,7 @@ from pathlib import Path
 from os import makedirs,environ
 from os.path import isfile,isdir
 from helpers2 import RoundAndPadToString,FullDateTimeString,FormatTimeDeltaToPaddedString,SetPrintWarningMessages
-from textwrap import indent
+from textwrap import indent,dedent
 from threading import Thread
 from .SocketHelpers import PackTopicAndJSONAndSend
 from .GUI import GUIClass					# might want to rename this module since GUI is used below for the actual GUI object?
@@ -26,7 +26,7 @@ from datetime import datetime
 from pydbus import SystemBus
 from lndgrpc import LNDClient
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
-from textwrap import dedent
+
 from yaml import safe_load
 import can, isotp
 
