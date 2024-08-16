@@ -23,7 +23,7 @@ from argparse import ArgumentParser,RawTextHelpFormatter
 parser = ArgumentParser(description="lnd-grpc-test: test python lndgrpc function calls that are used by Distributed Charge.\n\nThis script can be thought of as a dumbed down version of lncli. However, instead of using the `tls.cert` and `admin.macaroon` files in the ~/.lnd/ directory, it uses an lndconnect: URI string found in the ~/.dc/Config.yaml file. This script can test that your lndconnect: string is valid, that the python lnd grpc functions are installed and working properly, and that your node are able to be connected to. It can also be used to test if a function call works with the macaroon that you are using and/or the Lightning Terminal `Accounts` system, which has more limited functionality.",formatter_class=RawTextHelpFormatter)
 parser.add_argument(
 			"Action",
-			choices=['get_info','lookup_invoice','add_invoice','add_hold_invoice','cancel_invoice','settle_invoice','decode_payment_request','send_payment','track_payment_v2','track_payments','subscribe_invoices','subscribe_single_invoice','get_best_block','get_block_hash','get_block','channel_balance'],
+			choices=['get_info','lookup_invoice','add_invoice','add_hold_invoice','cancel_invoice','settle_invoice','decode_payment_request','send_payment','send_payment_v2','track_payment_v2','track_payments','subscribe_invoices','subscribe_single_invoice','get_best_block','get_block_hash','get_block','channel_balance'],
 			help='Action to take:\n'+
 			'\t\t`get_info` gets information about your lnd node.\n'+
 			'\t\t`lookup_invoice` checks the status of an invoice.\n'+
@@ -33,6 +33,7 @@ parser.add_argument(
 			'\t\t`settle_invoice` settles a hold invoice.\n'+
 			'\t\t`decode_payment_request` decodes an invoice.\n'+
 			'\t\t`send_payment` pays an invoice.\n'+
+			'\t\t`send_payment_v2` pays an invoice and then tracks the status of the outbound payment.\n'+
 			'\t\t`track_payment_v2` tracks an outbound payment.\n'+
 			'\t\t`track_payments` tracks all outbound payments.\n'+
 			'\t\t`subscribe_invoices` tracks all invoices.\n'+
@@ -53,7 +54,7 @@ parser.add_argument('--LNDhost', help="override the `LNDhost` value that was rea
 parser.add_argument('--amount', default=1,type=int,help="`add_invoice` and `add_hold_invoice` amount (default: %(default)s) [sat].")
 parser.add_argument('--r_hash',type=str,help="`lookup_invoice`, `cancel_invoice`, `subscribe_single_invoice`, and `track_payment_v2` r_hash (hex)")
 parser.add_argument('--preimage',type=str,help="`settle_invoice`, preimage (hex)")
-parser.add_argument('--invoice',type=str,help="`send_payment` and `decode_payment_request` invoice")
+parser.add_argument('--invoice',type=str,help="`send_payment`, `send_payment_v2`, and `decode_payment_request` invoice")
 parser.add_argument('--block_height',type=int,help="`get_block_hash` block_height")
 parser.add_argument('--block_hash',type=str,help="`get_block` block_hash (hex)")
 
@@ -191,26 +192,32 @@ elif arguments.Action == 'send_payment':
 	print('payment_hash: '+TheInvoice.payment_hash.hex())
 
 
+elif arguments.Action == 'send_payment_v2':
+	for TheResponse in lnd.send_payment_v2(payment_request=arguments.invoice, timeout_seconds=25, allow_self_payment=True):
+		print('\n\n====================================================================================')
+		print(TheResponse)
+
+
 elif arguments.Action == 'track_payment_v2':
 	for TheResponse in lnd.track_payment_v2(arguments.r_hash):
-		print('====================================================================================')
+		print('\n\n====================================================================================')
 		print(TheResponse)
 
 
 elif arguments.Action == 'track_payments':
 	for TheResponse in lnd.track_payments():
-		print('====================================================================================')
+		print('\n\n====================================================================================')
 		print(TheResponse)
 
 
 elif arguments.Action == 'subscribe_invoices':
 	for Invoice in lnd.subscribe_invoices():
-		print('====================================================================================')
+		print('\n\n====================================================================================')
 		print(Invoice)
 
 elif arguments.Action == 'subscribe_single_invoice':
 	for Invoice in lnd.subscribe_single_invoice(bytes.fromhex(arguments.r_hash)):
-		print('====================================================================================')
+		print('\n\n====================================================================================')
 		print(Invoice)
 
 
