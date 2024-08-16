@@ -290,6 +290,63 @@ class TWCANMessagesClass(Thread):
 
 
 
+
+
+
+
+
+
+
+class ThreadManagerClass:
+
+	def __init__(self):
+		self.ThreadList=[]
+		self.JoinTimeout=10
+		self.ShutdownRequested=False
+		self.CleanShutdown=True
+
+	def AddThread(self,TheThread):
+		self.ThreadList.append(TheThread)
+
+	def StopThreads(self):
+		logger.info('shutdown requested')
+		self.ShutdownRequested=True
+
+		logger.debug('shutting threads down')
+
+		# tell all threads to stop
+		for TheThread in self.ThreadList:
+			TheThread.stop()
+
+		# now, wait for them to stop
+		# note: if .join is not used with GUI, python tries too quit before the stop command is received by the thread and it gracefully shutdown and then it takes longer for tk to timeout and close the interpreter (it seems that is what is going on at least).
+
+		# note: .join(self.JoinTimeout) returns after self.JoinTimeout seconds OR when the thread joins/quits, whichever is sooner.
+		# so, need to check .is_alive() to see if the thread actually is still running.
+
+		for TheThread in self.ThreadList:
+			TheThread.join(self.JoinTimeout)
+
+		logger.debug('threads should be shut down')
+
+
+	def AnyThreadAlive(self):
+		for TheThread in self.ThreadList:
+			if TheThread.is_alive():
+				return True
+		else:
+			return False
+
+
+
+
+
+
+
+
+
+
+
 ################################################################
 
 
@@ -303,6 +360,14 @@ class TWCANMessagesClass(Thread):
 ReceiveInvoicesThread=ReceiveInvoices()
 SWCANMessages=SWCANMessagesClass()
 TWCANMessages=TWCANMessagesClass()
+
+
+ThreadManager=ThreadManagerClass()
+
+ThreadManager.AddThread(GUI)
+ThreadManager.AddThread(SWCANMessages)
+ThreadManager.AddThread(TWCANMessages)
+ThreadManager.AddThread(ReceiveInvoicesThread)
 
 
 ################################################################
@@ -325,10 +390,8 @@ class Meter: pass
 
 
 
-
-try:
-
-	while True:
+while True:
+	try:
 
 		#pass values to the GUI
 		GUI.Volts=TWCANMessages.Volts
@@ -348,11 +411,6 @@ try:
 		GUI.MaxAmps=TWCANMessages.MaxAmps
 
 		GUI.SettledPayments=EnergyPaidFor*CurrentRate
-
-
-
-		if GUI._stop_event.is_set():
-			sys.exit()
 
 
 
@@ -616,35 +674,69 @@ try:
 					#continue to wait for an offer
 					pass
 
-		sleep(.25)
 
 
 
 
 
-except (KeyboardInterrupt, SystemExit):
+	# shutdown logic
+
+		if not ThreadManager.ShutdownRequested and GUI.stopped() and not GUI.is_alive():
+			logger.info('GUI triggered shutdown request')
+
+			# need to re-call SystemExit outside of the GUI thread
+			sys.exit()
+
+		if ThreadManager.AnyThreadAlive():
+			if ThreadManager.ShutdownRequested:
+				logger.error('all threads did not shut down on their own, terminating the remaining threads')
+				break
+			else:
+				# nothing to do, not time to shut down
+				sleep(.1)
+		else:
+			if ThreadManager.ShutdownRequested:
+				logger.debug('all threads shut down on their own after being asked')
+				break
+			else:
+				logger.debug('all threads shut down on their own without being asked')
+				break
+#also add a check for one thread shut down on it's own and then force shutdown of everything since things probably won't work right with a dead thread?????? that could then generalize things a bit because wouldn't need to specifically check for the GUI thread to have stopped?
+
+	except (KeyboardInterrupt, SystemExit):
+
+		ThreadManager.StopThreads()
+
+		# now loop again to see above if the threads shutdown after being asked
+# does this cause finally to be executed twice then???? yes, seems it does. also seems like a more confusing way to write the logic above instead of below, so may want to re-do this.
+
+	except:
+		logger.exception('error in main loop')
+		ThreadManager.CleanShutdown=False
+#should this also run ThreadManager.StopThreads() to be cleaner?????
+		raise
+
+	finally:
+
+		if ThreadManager.ShutdownRequested or not ThreadManager.CleanShutdown:		# don't run on every loop iteration, only if shutting down
+
+			# the state should be restored to off when python is stopped, but explicitly set to off to be sure.
+			SWCAN_Relay.off()
+
+			if not ThreadManager.CleanShutdown:		# if an uncaught exception, put some extra lines at the end
+				ExtraText='\n\n\n'
+			else:
+				ExtraText=''
+
+			logger.info("turned off SWCAN relay"+ExtraText)
 
 
-	SWCANMessages.stop()
-	SWCANMessages.join()
-	TWCANMessages.stop()
-	TWCANMessages.join()
-	ReceiveInvoicesThread.stop()
-	ReceiveInvoicesThread.join()
-	GUI.stop()
-	GUI.join()	#for some reason if this is not used, python tries too quit before the stop command is received by the thread and it gracefully shutdown and then it takes longer for tk to timeout and close the interpreter?
+logger.info('shutdown complete\n\n\n')
 
-	logger.info("quitting")
 
-except:
-	raise
 
-finally:
 
-	# the state should be restored to off when python is stopped, but explicitly set to off to be sure.
-	SWCAN_Relay.off()
 
-	logger.debug("turned off relay\n\n\n")
 
 
 
