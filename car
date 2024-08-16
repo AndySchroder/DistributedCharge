@@ -235,6 +235,7 @@ class TWCANMessagesClass(Thread):
 		self.Volts=None
 		self.MaxAmps=0
 		self.Amps=None
+		self.StateOfCharge=0
 
 		self.daemon=True	# using daemon mode so control-C will stop the script and the threads and .join() can timeout and if the main thread crashes, then it will all crash and restart automatically (by systemd).
 
@@ -274,6 +275,11 @@ class TWCANMessagesClass(Thread):
 						else:
 		#don't know, need to handle this better!
 							pass
+
+					elif (m3.get_message_by_name('ID292BMS_SOC').frame_id == self.message.arbitration_id):
+						# note, this is a few percent higher than what actually comes up in the car. there are other percent based SOC values, but they are even higher.
+						# ID33AUI_rangeSOC, UI_Range does match what is in the car though, but it is in units of miles. can this be simply converted to percent??????
+						self.StateOfCharge=getCANvalue(self.message.data,'ID292BMS_SOC','SOCUI292')
 
 					#can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
 					#also, if picking up on SW CAN, need to do it after the "if Proximity:" statement below.
@@ -431,6 +437,13 @@ while True:
 
 
 
+
+
+
+
+
+
+
 		if TWCANMessages.TESLA_SWCAN_ESTABLISHED:
 			SWCANActive=True
 		else:		#disconnect on anything else for now (may want to revisit all states and see if want to stay connected on sleep for example)
@@ -440,7 +453,7 @@ while True:
 #also need to consider having a 15 second delay between pluggin/unplugging like the wall unit, so that they are both measuring energy delivery from the same start time
 			SWCANActive=False
 			TWCANMessages.Volts=None
-			Current=None
+			TWCANMessages.Amps=None
 			Power=0
 			TWCANMessages.MaxAmps=0
 
@@ -640,6 +653,7 @@ while True:
 										#################################################
 
 										DataLogger.LogTabularDataAndMessages()
+										logger.info('Car Battery State Of Charge: '+ RoundAndPadToString(TWCANMessages.StateOfCharge,2)+'%')
 										SmallStatus='Payment Sent'
 
 						else:

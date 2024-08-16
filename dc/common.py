@@ -746,6 +746,7 @@ if mode in PartyMappings:
 												{"can_id": m3.get_message_by_name('ID21DCP_evseStatus').frame_id, "can_mask": 0x7ff, "extended": False},
 												{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
 												{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
+												{"can_id": m3.get_message_by_name('ID292BMS_SOC').frame_id, "can_mask": 0x7ff, "extended": False},
 												])
 		################################################################
 
