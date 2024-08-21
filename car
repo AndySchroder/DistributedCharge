@@ -491,6 +491,13 @@ while True:
 				if SWCAN_Relay.is_lit:
 					SWCAN_Relay.off()
 					logger.debug("relay off")
+
+					# clear message values received from the bus. otherwise an old offer will be accepted when re-plugging in the bus before the relay is
+					# even energized and/or before wall sends an offer and then wall will never get an acceptance message.
+#is there any kind of delay needed here in case a new message value is received while the relay is mechanically de-energizing?
+					SWCANMessages.WhoursPerPayment=None
+					SWCANMessages.RequiredPaymentAmount=None
+
 					if SWCANActive:
 						logger.debug('Charging Idle')
 						BigStatus='Charging Idle'
