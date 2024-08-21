@@ -62,6 +62,7 @@ MaxRate=1.5			#sat/(W*hour)
 MaxRequiredPaymentAmount=41	#sat
 
 MaxFeeFraction=0.03
+MaxFeeSat=2
 
 ################################################################
 
@@ -624,14 +625,15 @@ while True:
 									sleep(20)
 								else:
 									try:
-										logger.info("sending payment for "+str(AmountRequested)+" sat")
+										MaxAllowableFee=max(ceil(AmountRequested*MaxFeeFraction),MaxFeeSat)
+										logger.info("sending payment for "+RoundAndPadToString(AmountRequested,0)+" sat with a max allowable fee of "+RoundAndPadToString(MaxAllowableFee,0)+' sat ('+RoundAndPadToString(100*(MaxAllowableFee/AmountRequested),2)+'%)')
 
 # should check to make sure the "expiry" has not passed on the invoice yet before paying????
 # allow changing final_cltv_delta of the sent payment?
 # can to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting. might want to move this to another thread???
 
 										# send the payment and display updates as they are streamed during routing and settlement
-										for PaymentResponse in lnd.send_payment_v2(payment_request=oldestInvoice, fee_limit_sat=ceil(AmountRequested*MaxFeeFraction), timeout_seconds=25, allow_self_payment=True):
+										for PaymentResponse in lnd.send_payment_v2(payment_request=oldestInvoice, fee_limit_sat=MaxAllowableFee, timeout_seconds=25, allow_self_payment=True):
 											logger.debug('====================================================================================\n' + indent(DocumentWrapper(subsequent_indent='    ',width=80).fill(str(PaymentResponse)),' '*53))
 
 										if PaymentResponse.status != 2:
