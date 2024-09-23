@@ -113,7 +113,7 @@ ________________________________________________________________
       - Notes:
          - Requires all commands to be manually typed into the keyboard. There is no scrollback buffer.
          - Screen size and resolution is very low.
-      - Plug a USB keyboard into the TOFU and use the small DIN rail mounted screen.
+      - Plug a USB keyboard into the TOFU and use the small screen.
       - Username: dc
       - Password: value used above when running `mkpasswd --method=SHA-512 --rounds=4096` and was installed into the file `user-data`.
 
@@ -152,37 +152,58 @@ ________________________________________________________________
 
 ### Network Setup ###
 - We installed Network Manager and will use it instead of systemd-network (for everything but the CAN bus interfaces) because Network Manager supports cellular radios and also has simple setup of WiFi and Wireguard network interfaces.
-   - Configure WiFi (optional):
-      - `nmcli device wifi list`
-         - Shows wifi networks within range.
-      - `sudo nmcli device wifi connect "YourNetworkSSID" password "YourPassword"`
-         - Connects to a wifi network.
-      - Check connections with `nmcli` or `nmcli c`.
-   - Configure Cellular (optional):
-      - Compile and install `lpac` and `lpac-libmbim-wrapper` for provisioning eSIM profiles (optional).
-         - `git clone https://github.com/estkme-group/lpac`
-         - `cd lpac`
-         - `cmake . -DCPACK_GENERATOR=DEB`
-         - `make -j package`
-         - `sudo dpkg -i lpac_X.X.X_arm64.deb`
-         - `cd ..`
-         - `sudo pip3 install git+https://github.com/stich86/lpac-libmbim-wrapper.git`
-         - Verify the modem number is `0` with `mmcli -L`
-         - Find the MBIMdevice port of the modem by running `mmcli -m 0 -J|jq '.modem.generic.ports'|grep mbim`.
-         - Purchase a DATA.PLUS eSIM from https://silent.link/ .
-         - Follow the directions at https://github.com/estkme-group/lpac/blob/main/docs/USAGE.md to interact with the eSIM, but instead use `sudo lpac-mbim --device=/dev/MBIMdevice` in place of `lpac`.
-         - After configuring the profile to the eSIM, reset the cellular radio with `sudo mmcli -m 0 -r`
-         - Wait for the modem to be reset and change to modem number `1` with `watch mmcli -L`.
-      - Configure the cellular network interface
-         - `sudo nmcli c add type gsm ifname '*' con-name Cellular apn YourCellularAPNHere`
-            - For silent.link, use `plus` in place of `YourCellularAPNHere`.
-         - `sudo nmcli c modify Cellular connection.autoconnect yes`
-- You may now remove the ethernet cable if you setup WiFi and/or Cellular.
-- Use StaticWire for obtaining a dedicated public static IP address (optional):
+- Configure Cellular (optional):
+   - Compile and install `lpac` and `lpac-libmbim-wrapper` for provisioning eSIM profiles (optional).
+      - `git clone https://github.com/estkme-group/lpac`
+      - `cd lpac`
+      - `cmake . -DCPACK_GENERATOR=DEB`
+      - `make -j package`
+      - `sudo dpkg -i lpac_X.X.X_arm64.deb`
+      - `cd ..`
+      - `sudo pip3 install git+https://github.com/stich86/lpac-libmbim-wrapper.git`
+      - Verify the modem number is `0` with `mmcli -L`
+      - Find the MBIMdevice port of the modem by running `mmcli -m 0 -J|jq '.modem.generic.ports'|grep mbim`.
+      - Purchase a DATA.PLUS eSIM from https://silent.link/ .
+      - Follow the directions at https://github.com/estkme-group/lpac/blob/main/docs/USAGE.md to interact with the eSIM, but instead use `sudo lpac-mbim --device=/dev/MBIMdevice` in place of `lpac`.
+      - After configuring the profile to the eSIM, reset the cellular radio with `sudo mmcli -m 0 -r`
+      - Wait for the modem to be reset and change to modem number `1` with `watch mmcli -L`.
+   - Configure the cellular network interface
+      - `sudo nmcli c add type gsm ifname '*' con-name Cellular apn YourCellularAPNHere`
+         - For silent.link, use `plus` in place of `YourCellularAPNHere`.
+      - `sudo nmcli c modify Cellular connection.autoconnect yes`
+- Use StaticWire for obtaining a dedicated public static IP address using a wireguard tunnel (optional):
    - Follow the installation and usage instructions at https://github.com/AndySchroder/StaticWire .
    - Notes:
       - StaticWire allows you to access the CM4 from any internet connection, not just your local network.
       - The QR code from the `staticIP AddCredit` command does not work on the small built in screen, you will need to use ssh from a laptop.
+- Configure WiFi Client (optional):
+   - `nmcli device wifi list`
+      - Shows WiFi networks within range.
+   - `sudo nmcli device wifi connect "YourNetworkSSID" password "YourPassword"`
+      - Connects to a WiFi network.
+   - Check connections with `nmcli` or `nmcli c`.
+- Configure WiFi Hotspot (optional):
+   - Use this option if you want to be able to create a WiFi access point on your Payment Module to connect directly to it with your laptop. It can be useful if there is no WiFi network to be a client of nearby and you need to do some debugging. It is much faster than using cellular and also if you use StaticWire, you can connect to the payment module using the public IP address for the StaticWire tunnel and it will automatically bypass the tunnel since it knows that you are directly connected (making it even faster). Also, you can use the payment module as a WiFi internet connection for your laptop if you configured cellular or you have an ethernet connection.
+   - Create the Hotspot connection:
+      - `sudo nmcli d wifi hotspot ifname wlan0 ssid YourSSIDName password YourPassword`
+   - If you have UFW (Uncomplicated FireWall) installed (which was recommended above), you will need to allow some things through the firewall in order for it to work.
+      - Allow DHCP leases
+         - `sudo ufw allow in on wlan0 to any port 67 proto udp`
+      - Allow DNS
+         - `sudo ufw allow in on wlan0 from 10.42.0.0/24 to any port 53`
+      - Allow traffic to the internet
+         - `sudo ufw route allow in on wlan0 from 10.42.0.0/24 out on sw_xxxxxxxxxx`
+            - `sw_xxxxxxxxxx` is the name of the wireguard tunnel interface setup with StaticWire. If you aren't using a wireguard tunnel, then you likely want to use `wwan0`, which is the cellular interface, or `eth0`, which is the ethernet interface. If you also aren't using cellular or ethernet, then you can skip this step. If you are using both cellular and ethernet without a wireguard tunnel, you can repeat this command multiple times.
+      - Note: These rules will also allow traffic when the hotspot connection is off and and a WiFi client happens to be connected to a network with address 10.42.0.0/24. However, the routed traffic likely won't get very far because network address translation will be turned off when the hotspot connection is turned off and because 10.42.0.0/24 is not a publicly routable subnet. Also, the DHCP and DNS servers should be turned off if the hotspot connection is turned off. So, this does not seem to be a practical concern. Older versions of ubuntu seemed to setup these firewall rules automatically so this used to not even be something to consider, but in ubuntu 22.04, they seem to need to be explicitly defined.
+   - Now that you have setup the connection, you can use it
+      - Bring the Hotspot up
+         - `sudo c u Hotspot`
+            - Don't do this if already connected as a client to a WiFi network. You must first run `sudo c d WiFiClientConnection` to disconnect from that network.
+            - Needs to be done on each boot unless you run `sudo nmcli c modify Hotspot connection.autoconnect yes`, but you can't do this if you have connected as a client to another network above.
+         - Now you should see the SSID on your laptop and can connect to it.
+      - Bring the Hotspot down
+         - `sudo c d Hotspot`
+- You may now remove the ethernet cable if you setup WiFi and/or Cellular.
 - Connect to the CM4 using ssh (if you did not already do so above)
    - Check what IP addresses you have assigned to all interfaces by running `nmcli` or `ip -c a`.
    - Determine if you want to and can connect to an IP address using ethernet, WiFi, cellular, or StaticWire.
