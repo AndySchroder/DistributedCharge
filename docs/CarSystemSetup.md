@@ -38,11 +38,12 @@
 - Unzip the image file.
     - `unxz ubuntu-22.04.4-preinstalled-server-arm64+raspi.img.xz`
 - Check what disks are attached to your system by running `lsblk`.
-- Boot the CM4 in a special mode so that it attaches the eMMC disk to the USB-C port as a normal disk (see [eMMC boot](https://tofu.oratek.com/#/?id=emmc-boot) for how to do this with the TOFU)
-   - Download and compile: https://github.com/raspberrypi/usbboot?tab=readme-ov-file#building
-   - Run `sudo ./rpiboot -l`
-   - Hold down the nRPIBOOT button while plugging the USB-C on the TOFU
-   - Release the button after you stop seeing output from the `rpiboot` command.
+- Boot the CM4 in a special mode so that it attaches the eMMC disk to the USB-C port as a normal disk (see [eMMC boot](https://tofu.oratek.com/#/?id=emmc-boot) for how to do this with the TOFU).
+   - Install `rpiboot`.
+    - `sudo apt install rpiboot`
+   - Run `rpiboot -l` in a new terminal.
+   - Hold down the `nRPIBOOT` button while plugging the USB-C on the TOFU.
+   - Release the `nRPIBOOT` button after you stop seeing output from the `rpiboot` command in the terminal.
 - Run `lsblk` again to check to see what disks are attached to your system. Comparing to the above output should allow you to determine what disk the CM4 eMMC is.
 - Once you are certain you know the disk of the CM4 eMMC, image ubuntu server 22.04 onto the compute module, setting `of=` to the disk that corresponds to the CM4 eMMC. WARNING: don't mess up the `of=`  value as you will erase whatever disk you define there!
     - `sudo dd bs=100M if=ubuntu-22.04.4-preinstalled-server-arm64+raspi.img of=/dev/sdZ`
@@ -93,7 +94,7 @@ ________________________________________________________________
    - Save `user-data` .
    - Close any open terminal windows with a working directory of the disk.
    - Eject the disk and then remove the USB-C cable.
-
+   - Stop `rpiboot` using `Control-C`.
 
 
 ### Connecting to the CM4 for the first time ###
