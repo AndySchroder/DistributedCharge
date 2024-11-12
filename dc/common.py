@@ -663,6 +663,7 @@ if mode in PartyMappings:
 		LNDhost=ConfigFile[PartyMappings[mode]]['LNDhost']
 
 	lnd = LNDClient(LNDhost)
+	logger.info('connected to lnd node '+lnd.host+' at block height '+str(lnd.get_best_block().block_height))
 
 	################################################################
 
