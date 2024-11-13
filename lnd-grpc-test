@@ -48,7 +48,7 @@ parser.add_argument(
 
 parser.add_argument('-c','--config-path', help="override path to `Config.yaml` (default `~/.dc/` or defined by the `DC_DATADIR` environmental variable)", type=str,default=None)
 parser.add_argument('-f','--config-file-name', help="override the name of `Config.yaml`", type=str,default=None)
-parser.add_argument('-p','--party', choices=['Buyer', 'Seller'],default='Seller',help="party to use in `Config.yaml` to select the `LNDhost` value from (default: %(default)s).")
+parser.add_argument('-p','--party', choices=['Buyer', 'Seller'],default='Buyer',help="party to use in `Config.yaml` to select the `LNDhost` value from (default: %(default)s).")
 parser.add_argument('--LNDhost', help="override the `LNDhost` value that was read from the config file (value passed must be enclosed in quotes so that your shell does not misinterpret it)", type=str, default=None)
 
 parser.add_argument('--amount', default=1,type=int,help="`add_invoice` and `add_hold_invoice` amount (default: %(default)s) [sat].")
