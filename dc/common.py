@@ -440,42 +440,6 @@ class UpdateVariables(Thread):
 
 
 
-class AddAndWatchInvoice(Thread):
-
-	def __init__(self,value,memo='',expiry=60*10):
-		super(AddAndWatchInvoice, self).__init__()
-		self.daemon=True		# using daemon mode so control-C will stop the script and the threads.
-
-		self.value=value
-		self.expiry=expiry
-		self.memo=memo
-
-		logger.debug('getting new invoice for '+ str(self.value)+' sat with memo '+self.memo+' and expiry '+str(self.expiry))
-		Invoice=lnd.add_invoice(value=self.value,memo=self.memo,expiry=self.expiry)
-
-		self.r_hash=Invoice.r_hash
-		self.payment_request=Invoice.payment_request
-		self.state=0		# it is open because it's never been given to anyone yet
-
-		logger.debug('new invoice r_hash='+self.r_hash.hex()+' , payment_request='+self.payment_request)
-		logger.debug('state is now '+str(self.state)+' for invoice with r_hash='+self.r_hash.hex())
-
-		self.start()			# auto start on initialization
-
-	def run(self):
-		while True:
-			try:
-				logger.debug('watching invoice with r_hash='+self.r_hash.hex() +' for state changes')
-				for InvoiceUpdate in lnd.subscribe_single_invoice(self.r_hash):
-					self.state=InvoiceUpdate.state
-					logger.debug('state is now '+str(self.state)+' for invoice with r_hash='+self.r_hash.hex())
-
-				logger.debug('done watching invoice with r_hash='+self.r_hash.hex() +' for state changes')
-				break
-
-			except:
-				logger.exception('something went wrong with the LND connection for invoice with r_hash='+self.r_hash.hex()+'. retrying.....')
-
 
 
 
