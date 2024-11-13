@@ -19,16 +19,18 @@
 ################################################################
 
 from argparse import ArgumentParser,RawTextHelpFormatter
+from time import sleep
 
 parser = ArgumentParser(description="lnd-grpc-test: test python lndgrpc function calls that are used by Distributed Charge.\n\nThis script can be thought of as a dumbed down version of lncli. However, instead of using the `tls.cert` and `admin.macaroon` files in the ~/.lnd/ directory, it uses an lndconnect: URI string found in the ~/.dc/Config.yaml file. This script can test that your lndconnect: string is valid, that the python lnd grpc functions are installed and working properly, and that your node are able to be connected to. It can also be used to test if a function call works with the macaroon that you are using and/or the Lightning Terminal `Accounts` system, which has more limited functionality.",formatter_class=RawTextHelpFormatter)
 parser.add_argument(
 			"Action",
-			choices=['get_info','lookup_invoice','add_invoice','add_hold_invoice','cancel_invoice','settle_invoice','decode_payment_request','send_payment','send_payment_v2','track_payment_v2','track_payments','subscribe_invoices','subscribe_single_invoice','get_best_block','get_block_hash','get_block','channel_balance'],
+			choices=['get_info','lookup_invoice','add_invoice','add_hold_invoice','AddAndWatchInvoice','cancel_invoice','settle_invoice','decode_payment_request','send_payment','send_payment_v2','track_payment_v2','track_payments','subscribe_invoices','subscribe_single_invoice','get_best_block','get_block_hash','get_block','channel_balance'],
 			help='Action to take:\n'+
 			'\t\t`get_info` gets information about your lnd node.\n'+
 			'\t\t`lookup_invoice` checks the status of an invoice.\n'+
 			'\t\t`add_invoice` adds an invoice.\n'+
 			'\t\t`add_hold_invoice` adds a hold invoice.\n'+
+			'\t\t`AddAndWatchInvoice` adds an invoice and then watches the status of it.\n'+
 			'\t\t`cancel_invoice` cancels a hold invoice.\n'+
 			'\t\t`settle_invoice` settles a hold invoice.\n'+
 			'\t\t`decode_payment_request` decodes an invoice.\n'+
@@ -51,7 +53,7 @@ parser.add_argument('-f','--config-file-name', help="override the name of `Confi
 parser.add_argument('-p','--party', choices=['Buyer', 'Seller'],default='Buyer',help="party to use in `Config.yaml` to select the `LNDhost` value from (default: %(default)s).")
 parser.add_argument('--LNDhost', help="override the `LNDhost` value that was read from the config file (value passed must be enclosed in quotes so that your shell does not misinterpret it)", type=str, default=None)
 
-parser.add_argument('--amount', default=1,type=int,help="`add_invoice` and `add_hold_invoice` amount (default: %(default)s) [sat].")
+parser.add_argument('--amount', default=1,type=int,help="`add_invoice`, `add_hold_invoice`, and `AddAndWatchInvoice` amount (default: %(default)s) [sat].")
 parser.add_argument('--r_hash',type=str,help="`lookup_invoice`, `cancel_invoice`, `subscribe_single_invoice`, and `track_payment_v2` r_hash (hex)")
 parser.add_argument('--preimage',type=str,help="`settle_invoice`, preimage (hex)")
 parser.add_argument('--invoice',type=str,help="`send_payment`, `send_payment_v2`, and `decode_payment_request` invoice")
@@ -157,6 +159,16 @@ elif arguments.Action == 'add_hold_invoice':
 	print('hex versions:')
 	print('r_hash: '+r_hash.hex())
 	print('r_preimage: '+preimage.hex())
+
+
+
+elif arguments.Action == 'AddAndWatchInvoice':
+	TheInvoiceThread=lnd.AddAndWatchInvoice(value=arguments.amount)
+	while True:
+		if TheInvoiceThread.state==1 or TheInvoiceThread.state==2: 	# 'SETTLED' or 'CANCELED'
+			break
+		else:
+			sleep(0.1)
 
 
 elif arguments.Action == 'cancel_invoice':
