@@ -57,6 +57,7 @@ parser.add_argument('--amount', default=1,type=int,help="`add_invoice`, `add_hol
 parser.add_argument('--r_hash',type=str,help="`lookup_invoice`, `cancel_invoice`, `subscribe_single_invoice`, and `track_payment_v2` r_hash (hex)")
 parser.add_argument('--preimage',type=str,help="`settle_invoice`, preimage (hex)")
 parser.add_argument('--invoice',type=str,help="`send_payment`, `send_payment_v2`, and `decode_payment_request` invoice")
+parser.add_argument('--fee_limit_sat', default=5,type=int,help="`send_payment_v2` fee limit (default: %(default)s) [sat].")
 parser.add_argument('--block_height',type=int,help="`get_block_hash` block_height")
 parser.add_argument('--block_hash',type=str,help="`get_block` block_hash (hex)")
 
@@ -205,7 +206,7 @@ elif arguments.Action == 'send_payment':
 
 
 elif arguments.Action == 'send_payment_v2':
-	for TheResponse in lnd.send_payment_v2(payment_request=arguments.invoice, timeout_seconds=25, allow_self_payment=True):
+	for TheResponse in lnd.send_payment_v2(payment_request=arguments.invoice, fee_limit_sat=arguments.fee_limit_sat, timeout_seconds=25, allow_self_payment=True):
 		print('\n\n====================================================================================')
 		print(TheResponse)
 
