@@ -87,6 +87,7 @@ class GUIClass(threading.Thread):
 		self.DCGeneratorVoltage=0
 
 
+		self.OLDQRLink='initial'	# make it something different so as to trigger a blank image to be generated
 		self.QRLink=None
 
 		self.InvoiceExpirationText=''
@@ -455,28 +456,30 @@ class GUIClass(threading.Thread):
 
 
 
+			if self.OLDQRLink != self.QRLink:
+
+				self.OLDQRLink=self.QRLink
+
+				if self.QRLink is not None:
+					qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4,)
+					qr.add_data(self.QRLink)
+					qr.make(fit=True)
+					img = qr.make_image(fill_color="black", back_color="white")
+
+					ExtraImageScaling=0.6*.9
+
+					QRImageData_resized = img.resize((int(img.size[0]*self.screenscaling*ExtraImageScaling), int(img.height*self.screenscaling*ExtraImageScaling)),Image.LANCZOS)
+
+					QRPhotoImage=ImageTk.PhotoImage(QRImageData_resized)
 
 
-			if self.QRLink is not None:
-				qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4,)
-				qr.add_data(self.QRLink)
-				qr.make(fit=True)
-				img = qr.make_image(fill_color="black", back_color="white")
-
-				ExtraImageScaling=0.6*.9
-
-				QRImageData_resized = img.resize((int(img.size[0]*self.screenscaling*ExtraImageScaling), int(img.height*self.screenscaling*ExtraImageScaling)),Image.LANCZOS)
-
-				QRPhotoImage=ImageTk.PhotoImage(QRImageData_resized)
+				else:
+					#blank image
+					QRPhotoImage=ImageTk.PhotoImage(Image.new("RGB", (10, 10), (255, 255, 255)))
 
 
-			else:
-				#blank image
-				QRPhotoImage=ImageTk.PhotoImage(Image.new("RGB", (10, 10), (255, 255, 255)))
-
-
-			QRimage.configure(image=QRPhotoImage)
-			QRimage.pack_configure(padx=(int(10*self.screenscaling),int(0*self.screenscaling)),pady=(int(0*self.screenscaling),int(0*self.screenscaling)))
+				QRimage.configure(image=QRPhotoImage)
+				QRimage.pack_configure(padx=(int(10*self.screenscaling),int(0*self.screenscaling)),pady=(int(0*self.screenscaling),int(0*self.screenscaling)))
 
 
 
