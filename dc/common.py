@@ -215,8 +215,11 @@ logfile_log_level="debug"
 
 FormatStringTemplate='%(TIMEDATECOLOR)s%(asctime)s%(color_off)s [%(color_on)s%(levelname)8s%(color_off)s, %(FUNCTIONNAMECOLOR)s%(funcName)8.8s%(color_off)s]:   %(message)s'
 
-
+# use the root logger rather than this module's logger so the settings defined in this module are applied to the root and other
+# (sibling) modules at the same level as this module also inherit the settings applied here.
+# see also: https://stackoverflow.com/questions/50714316/how-to-use-logging-getlogger-name-in-multiple-modules
 logger = logging.getLogger()
+
 logger.setLevel(logging.DEBUG)
 
 console = logging.StreamHandler(sys.stdout)
