@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2024, Andy Schroder
+# Copyright (c) 2025, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -95,10 +95,10 @@ if arguments.LNDhost is not None:
 # now import the rest of the modules
 ################################################################
 
-from dc.common import lnd
+from dc.common import lnd, console
 
-
-
+# force console to log more stuff from lnd
+console.setLevel('DEBUG')
 
 
 

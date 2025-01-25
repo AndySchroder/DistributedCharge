@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+
+
+###############################################################################
+###############################################################################
+# Copyright (c) 2025, Andy Schroder
+# See the file README.md for licensing information.
+###############################################################################
+###############################################################################
+
+
+
+from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
+from dc.NFC import NFCClass
+import logging
+
+# setup command line parsing
+parser = ArgumentParser(description='[ ** Test python NFC function calls that are used by Distributed Charge ** ] This script should do the same thing as running `ndeftool uri "URL"|python3 ./tagtool.py emulate - tt3`, where `tagtool.py` comes from `https://github.com/nfcpy/nfcpy/blob/master/examples/tagtool.py` and `https://nfcpy.readthedocs.io/en/latest/examples/tagtool.html`, and installation instructions for `ndeftool` can be found at `https://ndeftool.readthedocs.io/`.',formatter_class=ArgumentDefaultsHelpFormatter)
+parser.add_argument('URL', help='URL you would like to send over NFC.',default='http://andyschroder.com/DistributedCharge/',nargs='?')
+parser.add_argument('--path','-p', help='The path to the NFC device. See `https://nfcpy.readthedocs.io/en/latest/modules/clf.html#nfc.clf.ContactlessFrontend.open` for more details on path formats allowed.',default='usb',type=str)
+arguments=parser.parse_args()
+
+
+# setup logging
+logging.basicConfig()                           # turn on logging
+logging.getLogger().setLevel(logging.INFO)      # set logging level
+
+
+# connect to the NFC device and be ready to send a URL in a separate thread
+NFC=NFCClass(path=arguments.path)
+
+# send a URL to the NFC device
+NFC.Link=arguments.URL
+
+# don't quit the script while the NFC thread is running, waiting for a user to tap the NFC device.
+NFC.join()
+
+

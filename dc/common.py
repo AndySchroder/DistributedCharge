@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2024, Andy Schroder
+# Copyright (c) 2025, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -210,7 +210,8 @@ class PreciseTimeFormatterWithColorizedLevel(logging.Formatter):
 
 
 
-console_log_level="info"
+#console_log_level="info"
+console_log_level="debug"
 logfile_log_level="debug"
 
 FormatStringTemplate='%(TIMEDATECOLOR)s%(asctime)s%(color_off)s [%(color_on)s%(levelname)8s%(color_off)s, %(FUNCTIONNAMECOLOR)s%(funcName)8.8s%(color_off)s]:   %(message)s'
