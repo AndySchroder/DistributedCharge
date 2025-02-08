@@ -74,7 +74,14 @@ def clean(*args):
 	sys.exit(0)
 
 def CatchKill():
-	# warning, does not catch SIGKILL.
+	# warning, does not catch SIGKILL. hopefully whatever is launching the script also does not
+	# die and this script is restarted soon if SIGKILL'ed (and this script dies without executing
+	# the "finally" clause below doing a proper shutdown) and does a proper reset on re-startup of
+	# digital outputs to a safe default since digital outputs remember their state when
+	# SIGKILL'ed (don't want the script to die and leave a digital output powered on that
+	# powers a relay that powers a motor for example, but instead want the script to restart
+	# and quickly return that relay to its nominal off position).
+	# note, SIGKILL of the launcher script will not kill this script though, it will detach and stay running.
 	for sig in (SIGABRT, SIGILL, SIGINT, SIGSEGV, SIGTERM):
 		signal(sig, clean)
 
