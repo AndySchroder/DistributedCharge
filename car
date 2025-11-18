@@ -240,8 +240,6 @@ class TWCANMessagesClass(Thread):
 
 		self.daemon=True	# using daemon mode so control-C will stop the script and the threads and .join() can timeout and if the main thread crashes, then it will all crash and restart automatically (by systemd).
 
-		logger.info('initialized TWCANMessagesClass thread')
-
 		self.start()			# auto start on initialization
 
 
@@ -252,56 +250,92 @@ class TWCANMessagesClass(Thread):
 
 	def run(self):
 
+		logger.info('initialized TWCANMessagesClass thread')
+
 		while True:
 
 			try:
 				self.message = TWCAN.recv(timeout=0.5)		# need to time out so can break out of the loop and cleanly shutdown
 			except:
-				logger.exception('error with TWCAN.recv')
+				logger.exception('error receiving TWCAN message')
 				sleep(5)
 			else:
 
-				#####################################################################
-				# don't need proximity for these things since they come from TWCAN
-				#####################################################################
+				try:
+					#logger.debug('TWCAN data received: '+str(self.message))
 
-				if (self.message is not None):
-					if (m3.get_message_by_name('ID21DCP_evseStatus').frame_id == self.message.arbitration_id):
-						self.TESLA_SWCAN_ESTABLISHED=(getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_teslaSwcanState')=="TESLA_SWCAN_ESTABLISHED")
+					#####################################################################
+					# don't need proximity for these things since they come from TWCAN
+					#####################################################################
 
-						if getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_ENABLED":
-							self.AC_CHARGE_ENABLED=True
-						elif getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_STANDBY":
-							self.AC_CHARGE_ENABLED=False
-						else:
-		#don't know, need to handle this better!
+					if (self.message is not None):
+
+						# NOTE: remember when adding messages here to add to `can_filters` in `common.py`, otherwise the messages will be ignored
+
+						if (m3.get_message_by_name('ID21DCP_evseStatus').frame_id == self.message.arbitration_id):
+							self.TESLA_SWCAN_ESTABLISHED=(getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_teslaSwcanState')=="TESLA_SWCAN_ESTABLISHED")
+							#logger.debug('TESLA_SWCAN_ESTABLISHED: '+str(self.TESLA_SWCAN_ESTABLISHED))
+
+							# NOTE: in the last year with some Tesla software changes it now seems to use AC_CHARGE_CONNECTED_CHARGE_BLOCKED for most of the time
+							# with these changes there is also a graceful stop when the charger tells it to stop charging instead of the car and charger faulting out.
+							# this came around the same time as the keep power acessory on option was added.
+							# need to investigate this behaviour a bit more. also need to look into sleep mode more and see what is going on and if the new always on accessory power option fixes some other things too.......
+							if getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_ENABLED" or getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_CONNECTED_CHARGE_BLOCKED":
+								self.AC_CHARGE_ENABLED=True
+							elif getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_STANDBY":
+								self.AC_CHARGE_ENABLED=False
+							else:
+								#don't know, need to handle this better!
+								pass
+
+
+						#elif (m3.get_message_by_name('ID292BMS_SOC').frame_id == self.message.arbitration_id):
+						#	# NOTE, this is a few percent higher than what actually comes up in the car. there are other percent based SOC values, but they are even higher.
+						#	# NOTE2: this message seems to be changed in recent software versions and gives
+						#	# `ValueError: Short data` (seems to be 4 bytes now instead of 8?)
+						# 	# so can no longer use it and now using, ID33AUI_rangeSOC, UI_Range, but see notes on that below.
+						#	self.StateOfCharge=getCANvalue(self.message.data,'ID292BMS_SOC','SOCUI292')
+
+
+						elif (m3.get_message_by_name('ID33AUI_rangeSOC').frame_id == self.message.arbitration_id):
+							# NOTE: ID33AUI_rangeSOC, UI_Range does match what is in the car, but it is in units of miles.
+							# trying to simply convert to percent, but this could vary based on car model, age, and battery temperature? need to further investigate...
+							MaxMiles=(231/86)*100.0
+							self.StateOfCharge=(getCANvalue(self.message.data,'ID33AUI_rangeSOC','UI_Range')/MaxMiles)*100
+
+						#can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
+						#also, if picking up on SW CAN, need to do it after the "if Proximity:" statement below.
+
+						elif (self.message.arbitration_id == 0x3d2):				#0x syntax seems to automatically convert to an integer.
+							#Model3CAN.dbc seems to have this mixed up with kWhoursDischarged? can fix Model3CAN.dbc, but just keeping it this way as an excersise on how decoding actually works.
+							self.TotalWhoursCharged=int.from_bytes(self.message.data[0:4],byteorder='little')		#seems to include regen?
+							self.TotalWhoursDischarged=int.from_bytes(self.message.data[4:8],byteorder='little')		#not needed, but just keeping in here so understand what the rest of the message contains
+
+						elif (m3.get_message_by_name('ID31CCC_chgStatus').frame_id == self.message.arbitration_id):
+							self.Volts=getCANvalue(self.message.data,'ID31CCC_chgStatus','CC_line1Voltage')
+							self.MaxAmps=getCANvalue(self.message.data,'ID31CCC_chgStatus','CC_currentLimit')
+
+						elif (m3.get_message_by_name('ID32CCC_logData').frame_id == self.message.arbitration_id):
+							if getCANvalue(self.message.data,'ID32CCC_logData','CC_logIndex') == 'Mux1':		#Signals available in the message seem to be dependent on this value.
+								self.Amps=getCANvalue(self.message.data,'ID32CCC_logData','CC_conn1Current')
+						#END can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
+
+						elif (self.message.arbitration_id == 4):
+							# for some reason this is getting through `can_filters`, so ignore it and don't print "unknown TWCAN message received"
 							pass
 
-					elif (m3.get_message_by_name('ID292BMS_SOC').frame_id == self.message.arbitration_id):
-						# note, this is a few percent higher than what actually comes up in the car. there are other percent based SOC values, but they are even higher.
-						# ID33AUI_rangeSOC, UI_Range does match what is in the car though, but it is in units of miles. can this be simply converted to percent??????
-						self.StateOfCharge=getCANvalue(self.message.data,'ID292BMS_SOC','SOCUI292')
+						else:
+							logger.debug('unknown TWCAN message received: ' + str(self.message))
+					else:
+						logger.debug('no TWCAN message received')
+						pass
 
-					#can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
-					#also, if picking up on SW CAN, need to do it after the "if Proximity:" statement below.
-
-					elif (self.message.arbitration_id == 0x3d2):				#0x syntax seems to automatically convert to an integer.
-						#Model3CAN.dbc seems to have this mixed up with kWhoursDischarged? can fix Model3CAN.dbc, but just keeping it this way as an excersise on how decoding actually works.
-						self.TotalWhoursCharged=int.from_bytes(self.message.data[0:4],byteorder='little')		#seems to include regen?
-						self.TotalWhoursDischarged=int.from_bytes(self.message.data[4:8],byteorder='little')		#not needed, but just keeping in here so understand what the rest of the message contains
-
-					elif (m3.get_message_by_name('ID31CCC_chgStatus').frame_id == self.message.arbitration_id):
-						self.Volts=getCANvalue(self.message.data,'ID31CCC_chgStatus','CC_line1Voltage')
-						self.MaxAmps=getCANvalue(self.message.data,'ID31CCC_chgStatus','CC_currentLimit')
-
-					elif (m3.get_message_by_name('ID32CCC_logData').frame_id == self.message.arbitration_id):
-						if getCANvalue(self.message.data,'ID32CCC_logData','CC_logIndex') == 'Mux1':		#Signals available in the message seem to be dependent on this value.
-							self.Amps=getCANvalue(self.message.data,'ID32CCC_logData','CC_conn1Current')
-					#END can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
-
-				#####################################################################
+					#####################################################################
+				except:
+					logger.exception('error decoding TWCAN message')
 
 			if self._stop_thread.is_set():
+				logger.debug('TWCANMessagesClass thread stop request received')
 				break
 
 		logger.info('stopped TWCANMessagesClass thread')
@@ -446,6 +480,8 @@ while True:
 
 
 		if TWCANMessages.TESLA_SWCAN_ESTABLISHED:
+			if not SWCANActive:
+				logger.info("SWCANActive")
 			SWCANActive=True
 		else:		#disconnect on anything else for now (may want to revisit all states and see if want to stay connected on sleep for example)
 #does not seem to send another signal before going into sleep mode. need to figure out something else to do to detect, or also use voltage measured
@@ -483,7 +519,7 @@ while True:
 			if TWCANMessages.AC_CHARGE_ENABLED and SWCANActive:
 				if not SWCAN_Relay.is_lit:
 					SWCAN_Relay.on()
-					logger.debug("relay energized")
+					logger.debug("AC_CHARGE_ENABLED, relay energized")
 					if BigStatus=='Charging Idle':
 						logger.debug('Charging Resume From Idle')
 						BigStatus='Charging'
@@ -718,9 +754,17 @@ while True:
 
 
 				else:
-					#continue to wait for an offer
+					logger.info('waiting for offer')
 					pass
+			else:
+				logger.info('no voltage or current found yet')
+				pass
 
+
+
+		else:
+			#logger.info('no proximity')
+			pass
 
 
 

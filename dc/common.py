@@ -718,11 +718,15 @@ if mode in PartyMappings:
 		################################################################
 		TWCAN = can.interface.Bus(channel=ConfigFile[PartyMappings[mode]]['TWCANname'], bustype='socketcan',can_filters=[
 												{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
-												{"can_id": 1990, "can_mask": 0x7ff, "extended": False},
 												{"can_id": m3.get_message_by_name('ID21DCP_evseStatus').frame_id, "can_mask": 0x7ff, "extended": False},
 												{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
 												{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
-												{"can_id": m3.get_message_by_name('ID292BMS_SOC').frame_id, "can_mask": 0x7ff, "extended": False},
+
+												# see notes in `car` on why this is disabled
+												#{"can_id": m3.get_message_by_name('ID292BMS_SOC').frame_id, "can_mask": 0x7ff, "extended": False},
+
+												{"can_id": m3.get_message_by_name('ID33AUI_rangeSOC').frame_id, "can_mask": 0x7ff, "extended": False},
+
 												])
 		################################################################
 
