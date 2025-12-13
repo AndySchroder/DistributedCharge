@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2024, Andy Schroder
+# Copyright (c) 2025, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -20,22 +20,22 @@ import dc
 dc.mode='car'
 
 # dc.common must be the second imported module because it reads the config
-from dc.common import ConfigFile, m3, getCANvalue, can_Message, SWCAN_Relay, SWCAN, SWCAN_ISOTP, TWCAN, lnd, GUI, logger, LogData
+from dc.common import ConfigFile, SWCAN_Relay, SWCANMessagesClass, ReceiveInvoices, TWCANMessagesClass, lnd, GUI, logger, LogData, ThreadManagerClass
 
 from time import sleep,time
 from datetime import datetime,timedelta
 
-from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,SetPrintWarningMessages
+from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,SetPrintWarningMessages, FullDateTimeString
 from textwrap import indent,TextWrapper
 import sys
 
-from collections import deque
 
 
 
 
 
-from threading import Thread, Event
+
+
 from bolt11.core import decode
 
 
@@ -53,11 +53,14 @@ from math import ceil
 
 
 ################################################################
-#define configuration related constants
+# define configuration related constants
 ################################################################
 
+kW=1.0*10**3		# W
 
-MaxRate=1.5			#sat/(W*hour)
+MaxRate_kW=1_000			# sat/(kW*hour)
+
+MaxRate=MaxRate_kW/kW
 
 MaxRequiredPaymentAmount=41	#sat
 
@@ -67,25 +70,14 @@ MaxFeeSat=2
 ################################################################
 
 
-
-
-
-
-
-
 ################################################################
 # initialize variables
 ################################################################
 
-SWCANActive=False
-SWCANConnected=False
 Proximity=False
-
-
+SWCANActive=False
 AcceptedRate=False
-
 Power=0
-
 ChargeStartTime=-1
 CurrentRate=0
 RequiredPaymentAmountAccepted=0
@@ -93,23 +85,12 @@ EnergyDelivered=0
 EnergyPaidFor=0
 NumberOfPaymentsReceived=0
 
-BigStatus='Insert Charge Cable Into Car'
-SmallStatus='Waiting For Charge Cable To Be Inserted'
-
 ################################################################
-
-
-
-
 
 
 ################################################################
 # define functions and classes
 ################################################################
-
-
-
-
 
 class DocumentWrapper(TextWrapper):
 	# inspired from https://stackoverflow.com/questions/1166317/python-textwrap-library-how-to-preserve-line-breaks/45287550#45287550
@@ -119,295 +100,7 @@ class DocumentWrapper(TextWrapper):
 		lines = [line for para in split_text for line in TextWrapper.wrap(self, para)]
 		return lines
 
-
-
-
-
-
-
-class ReceiveInvoices(Thread):
-	#this class holds the InvoiceQueue object, receives invoices, operates in another thread in daemon mode, and will shutdown if the .stop() method is used.
-	#not sure if the socket should be opened and closed from within here or not. to be re-visited at a later time.
-	#not sure if socket needs to be re-created every time SWCAN comes up.
-	#see also:
-		# https://stackoverflow.com/questions/47912701/python-how-can-i-implement-a-stoppable-thread
-		# https://stackoverflow.com/questions/40382332/example-usages-of-the-stoppablethread-subclass-of-pythons-threading-thread
-		# https://github.com/python/cpython/blob/2.7/Lib/threading.py#L743
-		# https://stackoverflow.com/questions/27102881/python-threading-self-stop-event-object-is-not-callable
-
-	def __init__(self,  *args, **kwargs):
-		super(ReceiveInvoices, self).__init__(*args, **kwargs)
-		self._stop_thread = Event()
-		self.InvoiceQueue=deque()
-		self.daemon=True		# using daemon mode so control-C will stop the script and the threads.
-		logger.info('listening on SWCAN for new invoices')
-		self.start()			# auto start on initialization
-
-	def stop(self):
-		logger.debug('ReceiveInvoices thread stop requested')
-		self._stop_thread.set()
-
-	def stopped(self):
-		return self._stop_thread.is_set()
-
-	def run(self):
-		while True:
-			try:
-				NewInvoice=SWCAN_ISOTP.recv()		#SWCAN_ISOTP is set to timeout every 0.1 seconds, so it automatically sleeps for us
-			except:
-				logger.exception('error with SWCAN_ISOTP.recv')
-				sleep(5)
-			else:
-				if NewInvoice is not None:
-					self.InvoiceQueue.append(NewInvoice.decode())		# SWCAN_ISOTP receives data as binary, so need to run .decode() to convert it back to a string.
-					logger.info('new invoice received and added to the queue. total outstanding invoices is now '+str(len(self.InvoiceQueue)))
-			if self._stop_thread.is_set():
-				break
-
-		logger.info('stopped ReceiveInvoices thread')
-
-
-
-
-
-
-
-
-class SWCANMessagesClass(Thread):
-	def __init__(self,  GUI=None):
-		super(SWCANMessagesClass, self).__init__()
-		self._stop_thread = Event()
-
-		self.message=None
-		self.WhoursPerPayment=None
-		self.RequiredPaymentAmount=None
-
-		self.daemon=True	# using daemon mode so control-C will stop the script and the threads and .join() can timeout and if the main thread crashes, then it will all crash and restart automatically (by systemd).
-
-		logger.info('initialized SWCANMessagesClass thread')
-
-		self.start()			# auto start on initialization
-
-
-	def stop(self):
-		logger.debug('SWCANMessagesClass thread stop requested')
-		self._stop_thread.set()
-
-
-	def run(self):
-
-		while True:
-			try:
-				# according to https://github.com/hardbyte/python-can/issues/768 there is some kind of buffer. not sure what it actually is
-				# but since the frequency of all messages of interest is low after applying the filter, hoping it is good enough for now.
-				self.message = SWCAN.recv(timeout=0.5)		# listen for messages even if not Proxmity because if there is no proximity, there will just be nothing there.
-
-			except:
-				logger.exception('error with SWCAN.recv')
-				sleep(5)
-			else:
-
-				if (self.message is not None):
-					if (self.message.arbitration_id == 1998):							#offer received
-						self.WhoursPerPayment=int.from_bytes(self.message.data[0:4],byteorder='little')		#Whours_offered
-						self.RequiredPaymentAmount=int.from_bytes(self.message.data[4:8],byteorder='little')		#for_sat
-
-			if self._stop_thread.is_set():
-				break
-
-		logger.info('stopped SWCANMessagesClass thread')
-
-
-
-
-
-
-
-
-class TWCANMessagesClass(Thread):
-	def __init__(self,  GUI=None):
-		super(TWCANMessagesClass, self).__init__()
-		self._stop_thread = Event()
-
-		self.message=None
-		self.TESLA_SWCAN_ESTABLISHED=False
-		self.AC_CHARGE_ENABLED=False
-		self.TotalWhoursCharged=-1
-		self.Volts=None
-		self.MaxAmps=0
-		self.Amps=None
-		self.StateOfCharge=0
-
-		self.daemon=True	# using daemon mode so control-C will stop the script and the threads and .join() can timeout and if the main thread crashes, then it will all crash and restart automatically (by systemd).
-
-		self.start()			# auto start on initialization
-
-
-	def stop(self):
-		logger.debug('TWCANMessagesClass thread stop requested')
-		self._stop_thread.set()
-
-
-	def run(self):
-
-		logger.info('initialized TWCANMessagesClass thread')
-
-		while True:
-
-			try:
-				self.message = TWCAN.recv(timeout=0.5)		# need to time out so can break out of the loop and cleanly shutdown
-			except:
-				logger.exception('error receiving TWCAN message')
-				sleep(5)
-			else:
-
-				try:
-					#logger.debug('TWCAN data received: '+str(self.message))
-
-					#####################################################################
-					# don't need proximity for these things since they come from TWCAN
-					#####################################################################
-
-					if (self.message is not None):
-
-						# NOTE: remember when adding messages here to add to `can_filters` in `common.py`, otherwise the messages will be ignored
-
-						if (m3.get_message_by_name('ID21DCP_evseStatus').frame_id == self.message.arbitration_id):
-							self.TESLA_SWCAN_ESTABLISHED=(getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_teslaSwcanState')=="TESLA_SWCAN_ESTABLISHED")
-							#logger.debug('TESLA_SWCAN_ESTABLISHED: '+str(self.TESLA_SWCAN_ESTABLISHED))
-
-							# NOTE: in the last year with some Tesla software changes it now seems to use AC_CHARGE_CONNECTED_CHARGE_BLOCKED for most of the time
-							# with these changes there is also a graceful stop when the charger tells it to stop charging instead of the car and charger faulting out.
-							# this came around the same time as the keep power acessory on option was added.
-							# need to investigate this behaviour a bit more. also need to look into sleep mode more and see what is going on and if the new always on accessory power option fixes some other things too.......
-							if getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_ENABLED" or getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_CONNECTED_CHARGE_BLOCKED":
-								self.AC_CHARGE_ENABLED=True
-							elif getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_STANDBY":
-								self.AC_CHARGE_ENABLED=False
-							else:
-								#don't know, need to handle this better!
-								pass
-
-
-						#elif (m3.get_message_by_name('ID292BMS_SOC').frame_id == self.message.arbitration_id):
-						#	# NOTE, this is a few percent higher than what actually comes up in the car. there are other percent based SOC values, but they are even higher.
-						#	# NOTE2: this message seems to be changed in recent software versions and gives
-						#	# `ValueError: Short data` (seems to be 4 bytes now instead of 8?)
-						# 	# so can no longer use it and now using, ID33AUI_rangeSOC, UI_Range, but see notes on that below.
-						#	self.StateOfCharge=getCANvalue(self.message.data,'ID292BMS_SOC','SOCUI292')
-
-
-						elif (m3.get_message_by_name('ID33AUI_rangeSOC').frame_id == self.message.arbitration_id):
-							# NOTE: ID33AUI_rangeSOC, UI_Range does match what is in the car, but it is in units of miles.
-							# trying to simply convert to percent, but this could vary based on car model, age, and battery temperature? need to further investigate...
-							MaxMiles=(231/86)*100.0
-							self.StateOfCharge=(getCANvalue(self.message.data,'ID33AUI_rangeSOC','UI_Range')/MaxMiles)*100
-
-						#can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
-						#also, if picking up on SW CAN, need to do it after the "if Proximity:" statement below.
-
-						elif (self.message.arbitration_id == 0x3d2):				#0x syntax seems to automatically convert to an integer.
-							#Model3CAN.dbc seems to have this mixed up with kWhoursDischarged? can fix Model3CAN.dbc, but just keeping it this way as an excersise on how decoding actually works.
-							self.TotalWhoursCharged=int.from_bytes(self.message.data[0:4],byteorder='little')		#seems to include regen?
-							self.TotalWhoursDischarged=int.from_bytes(self.message.data[4:8],byteorder='little')		#not needed, but just keeping in here so understand what the rest of the message contains
-
-						elif (m3.get_message_by_name('ID31CCC_chgStatus').frame_id == self.message.arbitration_id):
-							self.Volts=getCANvalue(self.message.data,'ID31CCC_chgStatus','CC_line1Voltage')
-							self.MaxAmps=getCANvalue(self.message.data,'ID31CCC_chgStatus','CC_currentLimit')
-
-						elif (m3.get_message_by_name('ID32CCC_logData').frame_id == self.message.arbitration_id):
-							if getCANvalue(self.message.data,'ID32CCC_logData','CC_logIndex') == 'Mux1':		#Signals available in the message seem to be dependent on this value.
-								self.Amps=getCANvalue(self.message.data,'ID32CCC_logData','CC_conn1Current')
-						#END can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
-
-						elif (self.message.arbitration_id == 4):
-							# for some reason this is getting through `can_filters`, so ignore it and don't print "unknown TWCAN message received"
-							pass
-
-						else:
-							logger.debug('unknown TWCAN message received: ' + str(self.message))
-					else:
-						logger.debug('no TWCAN message received')
-						pass
-
-					#####################################################################
-				except:
-					logger.exception('error decoding TWCAN message')
-
-			if self._stop_thread.is_set():
-				logger.debug('TWCANMessagesClass thread stop request received')
-				break
-
-		logger.info('stopped TWCANMessagesClass thread')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class ThreadManagerClass:
-
-	def __init__(self):
-		self.ThreadList=[]
-		self.JoinTimeout=10
-		self.ShutdownRequested=False
-		self.CleanShutdown=True
-
-	def AddThread(self,TheThread):
-		self.ThreadList.append(TheThread)
-
-	def StopThreads(self):
-		logger.info('shutdown requested')
-		self.ShutdownRequested=True
-
-		logger.debug('shutting threads down')
-
-		# tell all threads to stop
-		for TheThread in self.ThreadList:
-			TheThread.stop()
-
-		# now, wait for them to stop
-		# note: if .join is not used with GUI, python tries too quit before the stop command is received by the thread and it gracefully shutdown and then it takes longer for tk to timeout and close the interpreter (it seems that is what is going on at least).
-
-		# note: .join(self.JoinTimeout) returns after self.JoinTimeout seconds OR when the thread joins/quits, whichever is sooner.
-		# so, need to check .is_alive() to see if the thread actually is still running.
-
-		for TheThread in self.ThreadList:
-			TheThread.join(self.JoinTimeout)
-
-		logger.debug('threads should be shut down')
-
-
-	def AnyThreadAlive(self):
-		for TheThread in self.ThreadList:
-			if TheThread.is_alive():
-				return True
-		else:
-			return False
-
-
-
-
-
-
-
-
-
-
-
 ################################################################
-
-
-
 
 
 ################################################################
@@ -426,26 +119,13 @@ ThreadManager.AddThread(SWCANMessages)
 ThreadManager.AddThread(TWCANMessages)
 ThreadManager.AddThread(ReceiveInvoicesThread)
 
-
 ################################################################
-
 
 # hack: create an empty Meter class to use as a placeholder until the real Meter function is ported from GRID to EV so that LogData can work
 class Meter: pass
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+GUI.StatusAdd(BigText='Insert Charge Cable Into Car', SmallText='Waiting For Charge Cable To Be Inserted')
+logger.info("startup complete, ready to insert charge cable")
 
 while True:
 	try:
@@ -454,8 +134,6 @@ while True:
 		GUI.Volts=TWCANMessages.Volts
 		GUI.Amps=TWCANMessages.Amps
 		GUI.Power=Power
-		GUI.BigStatus=BigStatus
-		GUI.SmallStatus=SmallStatus
 
 		GUI.EnergyDelivered=EnergyDelivered
 		GUI.EnergyCost=EnergyDelivered*CurrentRate
@@ -464,109 +142,108 @@ while True:
 		GUI.RecentRate=CurrentRate
 		GUI.RequiredPaymentAmount=RequiredPaymentAmountAccepted
 		GUI.ChargeStartTime=ChargeStartTime
-		GUI.Connected=Proximity
 		GUI.MaxAmps=TWCANMessages.MaxAmps
 
 		GUI.SettledPayments=EnergyPaidFor*CurrentRate
 
 
+		######################
+		# TODO: move proximity detection to a separate thread
+		######################
 
+		if TWCANMessages.CHG_PROXIMITY_LATCHED:
+			if not Proximity:
+				Proximity=True
+				logger.info("plug inserted")
+				GUI.StatusAdd(BigText='Charge Cable Inserted')
 
+				CurrentTime=time()
+				TotalWhoursCharged_start=-1
+				EnergyDelivered=0
+				EnergyPaidFor=0
+				NumberOfPaymentsReceived=0
+				ChargeStartTime=datetime.now()
+				AcceptedRate=False
+				CurrentRate=0
+				RequiredPaymentAmountAccepted=0
 
+				DataLogger=LogData(Meter,GUI)
+			else:
+				# still plugged in
+				pass
 
+		else:
+			if Proximity:
+				Proximity=False
+				DataLogger.close()
 
+				# disconnect SWCAN if it is on
+				SWCAN_Relay.off()
+				logger.debug("relay off")
+				logger.debug("plug removed\n\n\n")
 
+				GUI.StatusAdd(BigText='Charge Cable Removed', MinDisplayTime=2)
+				GUI.StatusAdd(BigText='Insert Charge Cable Into Car', SmallText='Waiting For Charge Cable To Be Inserted')
 
+				# clear message values received from the bus. otherwise an old offer will be accepted when re-plugging in the bus before the relay is
+				# even energized and/or before wall sends an offer and then wall will never get an acceptance message.
+				# TODO: decide if is there any kind of delay needed here in case a new message value is received while the relay is mechanically de-energizing?
+				SWCANMessages.Rate=None
+				SWCANMessages.RequiredPaymentAmount=None
+				TWCANMessages.Volts=None
+				TWCANMessages.Amps=None
+				Power=0
+				TWCANMessages.MaxAmps=0
+
+				# stop counting charge time, but don't reset the counter yet
+				ChargeStartTime =-1
+			else:
+				# first startup and never plugged in or already unplugged
+				pass
 
 
 		if TWCANMessages.TESLA_SWCAN_ESTABLISHED:
 			if not SWCANActive:
-				logger.info("SWCANActive")
-			SWCANActive=True
-		else:		#disconnect on anything else for now (may want to revisit all states and see if want to stay connected on sleep for example)
-#does not seem to send another signal before going into sleep mode. need to figure out something else to do to detect, or also use voltage measured
-#from labjack on pilot/proximity pin to have more confidence on what is going on, like how the wall unit operates.
-#causes problems and then car errors out even though SWCAN is actually active, canbus doesn't think so, so ....
-#also need to consider having a 15 second delay between pluggin/unplugging like the wall unit, so that they are both measuring energy delivery from the same start time
-			SWCANActive=False
-			TWCANMessages.Volts=None
-			TWCANMessages.Amps=None
-			Power=0
-			TWCANMessages.MaxAmps=0
+				GUI.StatusAdd(SmallText='SWCAN Detected')
+				SWCANActive=True
 
+			# it seems like staying connected when idle causes charge faults sometimes.
+			# disconnect on anything else for now (may want to revisit all states and see if want to stay connected on sleep for example)
+			# does not seem to send another signal before going into sleep mode. need to figure out something else to do to detect, or also use voltage measured
+			# from pilot/proximity pin to have more confidence on what is going on, like how the wall unit operates.
+			# causes problems and then car errors out even though SWCAN is actually active, canbus doesn't think so, so ....
+			# also need to consider having a 15 second delay between pluggin/unplugging like the wall unit, so that they are both measuring energy delivery from the same start time
 
-
-		if SWCANActive and not Proximity:
-
-			Proximity=True
-			logger.info("plug inserted")
-			BigStatus='Charge Cable Inserted'
-			SmallStatus=''
-
-			CurrentTime=time()
-			TotalWhoursCharged_start=-1
-			EnergyDelivered=0
-			EnergyPaidFor=0
-			NumberOfPaymentsReceived=0
-			ChargeStartTime=datetime.now()
-			AcceptedRate=False
-
-			DataLogger=LogData(Meter,GUI)
-
-
-		elif Proximity:			# already have Proximity, but something changed.
-
-			if TWCANMessages.AC_CHARGE_ENABLED and SWCANActive:
-				if not SWCAN_Relay.is_lit:
+			if TWCANMessages.AC_CHARGE_ENABLED:			# have SWCAN, but only actually listen when the car seems like it is trying to actively charge
+				if not SWCAN_Relay.is_lit:				# car is actively trying to charge and SWCAN is not connected, connect SWCAN
 					SWCAN_Relay.on()
 					logger.debug("AC_CHARGE_ENABLED, relay energized")
-					if BigStatus=='Charging Idle':
+					logger.info("SWCANActive")
+
+					if GUI.StatusQueue[0][0]=='Charging Idle':				# need a more reliable way to do this??? better to use `GUI.BigStatusTextv.get()` or is there an even more explicit way??
 						logger.debug('Charging Resume From Idle')
-						BigStatus='Charging'
-						SmallStatus=''
-			else:
-				if SWCAN_Relay.is_lit:
+						GUI.StatusAdd(BigText='Charging')
+				else:
+					# car is actively trying to charge and SWCAN already connected
+					pass
+			else:		# car seems like it went into idle mode, disconnect SWCAN if it is connected
+				if SWCAN_Relay.is_lit:		# SWCAN is connected, disconnect it
 					SWCAN_Relay.off()
 					logger.debug("relay off")
 
-					# clear message values received from the bus. otherwise an old offer will be accepted when re-plugging in the bus before the relay is
-					# even energized and/or before wall sends an offer and then wall will never get an acceptance message.
-#is there any kind of delay needed here in case a new message value is received while the relay is mechanically de-energizing?
-					SWCANMessages.WhoursPerPayment=None
-					SWCANMessages.RequiredPaymentAmount=None
+					logger.debug('Charging Idle')
+					GUI.StatusAdd(BigText='Charging Idle', SmallText='Waiting For Car To Resume Charging', MinDisplayTime=2)
+				else:
+					# car idle and SWCAN already disconnected
+					pass
 
-					if SWCANActive:
-						logger.debug('Charging Idle')
-						BigStatus='Charging Idle'
-						SmallStatus='Waiting For Car To Resume Charging'
+		else:
+			SWCANActive=False
 
-			if not SWCANActive:
-				Proximity=False
-				DataLogger.close()
-				logger.debug("plug removed\n\n\n")
-				BigStatus='Charge Cable Removed'
-				SmallStatus=''
-				sleep(2)
-				BigStatus='Insert Charge Cable Into Car'
-				SmallStatus='Waiting For Charge Cable To Be Inserted'
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+		######################
 
 
 		if Proximity:
-
 
 			#################################################################
 			# do this stuff before testing for AcceptedRate because want to
@@ -574,23 +251,20 @@ while True:
 			#################################################################
 
 			if TWCANMessages.TotalWhoursCharged !=-1:
-
 				if TotalWhoursCharged_start==-1:	# just plugged in
 					TotalWhoursCharged_start=TWCANMessages.TotalWhoursCharged
 
-				#not yet used. need to add to the GUI or some other kind of report. can help understand how much energy is wasted warming the battery up as well as charger
-				#efficinecy since the Tesla GUI is very misleading on how much energy you are actually using
+				# not yet used. need to add to the GUI or some other kind of report. can help understand how much energy is wasted warming the battery up as well as charger
+				# efficinecy since the Tesla GUI is very misleading on how much energy you are actually using
 				EnergyAddedToBattery=TWCANMessages.TotalWhoursCharged-TotalWhoursCharged_start
 
-
-			if (TWCANMessages.Volts is not None) and (TWCANMessages.Amps is not None):		#can't start doing anything until an initial voltage and current reading is obtained on the can bus because need that to decide when to pay.
+			if (TWCANMessages.Volts is not None) and (TWCANMessages.Amps is not None):		# can't start doing anything until an initial voltage and current reading is obtained on the can bus because need that to decide when to pay.
 
 				PreviousTime=CurrentTime
 				CurrentTime=time()
-				deltaT=(CurrentTime-PreviousTime)/3600		#hours, small error on first loop when Proximity is initially True
-
-				Power=TWCANMessages.Volts*TWCANMessages.Amps
-				EnergyDelivered+=deltaT*Power		#W*hours
+				deltaT=(CurrentTime-PreviousTime)/3600			# hours
+				Power=TWCANMessages.Volts*TWCANMessages.Amps	# W
+				EnergyDelivered+=deltaT*Power					# W*hours
 
 
 				#################################################
@@ -621,21 +295,27 @@ while True:
 
 			#################################################################
 
-
 				if AcceptedRate:
-					if len(ReceiveInvoicesThread.InvoiceQueue)>0:		#invoices are waiting to be paid
+					if len(ReceiveInvoicesThread.InvoiceQueue)>0:		# invoices are waiting to be paid
 
 						oldestInvoice=ReceiveInvoicesThread.InvoiceQueue.popleft()
 						logger.debug("decoding "+oldestInvoice)
 						AmountRequested=int(decode(oldestInvoice).amount/1000)
 						logger.info("seller wants to be paid "+str(AmountRequested)+" satoshis")
-						SmallStatus='Payment Requested'
+						GUI.StatusAdd(SmallText=RoundAndPadToString(AmountRequested,0)+' sat Payment Requested', MinDisplayTime=1)
 
-						AllowedError=(0.025-0.20)/(48-5)*(TWCANMessages.Amps-5)+0.2       #measurement error seems to be somewhat linear between car and charger. need to further investigate.
-# note, this formula assumes the current is constant throughout the session. if the current is initially low and then goes up, it might not work because the new current is used for all former error.
+						# NOTE: measurement error seems to be somewhat linear between car and charger. need to further investigate....
+						#       also, this formula assumes the current is constant throughout the session. if the current is initially low and then goes up, it might not work because the new current is used for all former error.
+						AllowedError=(0.025-0.20)/(48-5)*(TWCANMessages.Amps-5)+0.2
 
 						if (		# TODO as noted elsewhere, need rework this to be in sat not W*hour
-								((EnergyPaidFor-EnergyDelivered)<(WhoursPerPaymentAccepted*0.70*2+(EnergyDelivered*AllowedError+75)))			#not asking for payment before energy is delivered (allowed to pay after 30% has been delivered (70% ahead of time)---actually, poor internet connections can be very slow, so make this 140% ahead instead. also tolerate error, including a linear error and a fixed error that is a little generous right now but occurs during initial plug in because the car and wall unit start measuring at slightly different times.
+
+								# NOTE: not asking for payment before energy is delivered (allowed to pay after 30% has been
+								#       delivered (70% ahead of time)---actually, poor internet connections can be very slow,
+								#       so make this 140% ahead instead. also tolerate error, including a linear error and a
+								#       fixed error that is a little generous right now but occurs during initial plug in
+								#       because the car and wall unit start measuring at slightly different times.
+								((EnergyPaidFor-EnergyDelivered)<(WhoursPerPaymentAccepted*0.70*2+(EnergyDelivered*AllowedError+75)))
 									and
 								(
 									(AmountRequested<=RequiredPaymentAmountAccepted)			#not asking for too much payment
@@ -664,9 +344,10 @@ while True:
 										MaxAllowableFee=max(ceil(AmountRequested*MaxFeeFraction),MaxFeeSat)
 										logger.info("sending payment for "+RoundAndPadToString(AmountRequested,0)+" sat with a max allowable fee of "+RoundAndPadToString(MaxAllowableFee,0)+' sat ('+RoundAndPadToString(100*(MaxAllowableFee/AmountRequested),2)+'%)')
 
-# should check to make sure the "expiry" has not passed on the invoice yet before paying????
-# allow changing final_cltv_delta of the sent payment?
-# can to be a very long time until timeout on network failure so this exception isn't caught very quickly and the GUI never updates while it is waiting. might want to move this to another thread???
+										# TODO: should check to make sure the "expiry" has not passed on the invoice yet before paying????
+										#       allow changing final_cltv_delta of the sent payment?
+										#       also, can to be a very long time until timeout on network failure so this exception isn't caught
+										#       very quickly and the GUI never updates while it is waiting. might want to move this to another thread???
 
 										# send the payment and display updates as they are streamed during routing and settlement
 										for PaymentResponse in lnd.send_payment_v2(payment_request=oldestInvoice, fee_limit_sat=MaxAllowableFee, timeout_seconds=25, allow_self_payment=True):
@@ -693,13 +374,22 @@ while True:
 										# is ported from GRID to EV so that LogData can work
 										#################################################
 
-										Meter.EnergyPayments = EnergyPaidFor*CurrentRate
+										Meter.SettledPayments = EnergyPaidFor*CurrentRate
 										Meter.NumberOfPaymentsReceived = NumberOfPaymentsReceived
 										#################################################
 
 										DataLogger.LogTabularDataAndMessages()
 										logger.info('Car Battery State Of Charge: '+ RoundAndPadToString(TWCANMessages.StateOfCharge,2)+'%')
-										SmallStatus='Payment Sent'
+
+										# show SmallText for 5-True*3=2 seconds if there are more invoices waiting to be paid (i.e. it is the second payment or we are behind because of a slow internet connection)
+										# or 5-False*3=5 seconds if there are no invoices waiting to be paid
+										# this way the (instantly updated) total payments table shown in the screen is less out of sync with the status messages
+										# because we will be showing the status messages quicker if there is a backlog and we are catching up on payments
+										# also assumes payments don't get made in less than 3.5 seconds (the payment requested message is shown for at least
+										# 1 second above and we are blanked for 0 to 0.5 below), otherwise we will always be behind and out of sync with the total payments table
+										# TODO: need to check and see if the LND GRPC gives an official time instead of this one.
+										GUI.StatusAdd(SmallText=RoundAndPadToString(AmountRequested,0)+' sat Payment Sent - ' + FullDateTimeString(datetime.now()), MinDisplayTime=(5-3*(len(ReceiveInvoicesThread.InvoiceQueue)>0)))
+										GUI.StatusAdd(SmallText='')		# blank the previous message after its DisplayTime is over
 
 						else:
 							#seller is asking for payment to quickly, waiting until they deliver energy that was agreed upon.
@@ -713,54 +403,50 @@ while True:
 							sleep(2)
 
 					else:
-#						logger.debug("waiting for next invoice")
+						#logger.debug("waiting for next invoice")
 						pass
 
-
-				elif (SWCANMessages.WhoursPerPayment is not None) and (SWCANMessages.RequiredPaymentAmount is not None):			#offer received
+				elif (SWCANMessages.Rate is not None) and (SWCANMessages.RequiredPaymentAmount is not None):			#offer received
 
 					# make a copy so don't let a new value on the bus change what is enforced locally
-					WhoursPerPaymentAccepted=SWCANMessages.WhoursPerPayment
+					CurrentRate=SWCANMessages.Rate
 					RequiredPaymentAmountAccepted=SWCANMessages.RequiredPaymentAmount
+					WhoursPerPaymentAccepted=RequiredPaymentAmountAccepted/CurrentRate
 
-					CurrentRate=RequiredPaymentAmountAccepted/WhoursPerPaymentAccepted					#1/(Whours_offered/for_sat)
+					GUI.StatusAdd(SmallText='Sale Terms Offer Received: ' + str(CurrentRate) + ' sat/(W*hour)', MinDisplayTime=2)
 
-					if (CurrentRate<MaxRate) and (RequiredPaymentAmountAccepted<MaxRequiredPaymentAmount):		#accept the rate, until SWCAN goes down. probably need to upgrade to allow rate changes during a charging session, but for now, this is how it works.
+					# accept the rate, until SWCAN goes down.
+					# TODO: probably need to upgrade to allow rate changes during a charging session, but for now, this is how it works.
+					if (CurrentRate<(MaxRate)) and (RequiredPaymentAmountAccepted<MaxRequiredPaymentAmount):
 						ReceiveInvoicesThread.InvoiceQueue.clear()		#all previous invoices are no longer be valid as far as the buyer is concerned, so ignore them
 
 						AcceptedRate=True
 
 						#print('getting ready to accept an offer')
 
-						SWCAN.send(can_Message(arbitration_id=1999,data=[True],is_extended_id=False))
-						logger.info("accepted an offer of "+RoundAndPadToString(WhoursPerPaymentAccepted,1)+" W*hour for a payment of "+str(RequiredPaymentAmountAccepted)+" satoshis ["+RoundAndPadToString(CurrentRate,1)+" satoshis/(W*hour)]")
+						SWCANMessages.send(arbitration_id=1999, data=[True])
+						logger.info("accepted an offer of "+RoundAndPadToString(CurrentRate,2)+" satoshis/(W*hour) with a payment size of "+str(RequiredPaymentAmountAccepted)+" satoshis")
 
-
-						BigStatus='Charging'
-						SmallStatus='Accepted Sale Terms'
-
+						GUI.StatusAdd(BigText='Charging', SmallText='Accepted Sale Terms', MinDisplayTime=2)
 
 					else:					#don't accept the rate, it's too high. wait and see if a lower offer is made.
-						SWCAN.send(can_Message(arbitration_id=1999,data=[False],is_extended_id=False))
+						SWCANMessages.send(arbitration_id=1999, data=[False])
 						logger.info("rate or payment amount too high, not accepting")
-						SmallStatus='Rejected Sale Terms, Waiting for a Better Offer'
+						GUI.StatusAdd(SmallText='Rejected Sale Terms, Waiting for a Better Offer')
 
-						# don't check again until a new offer actually comes in
-						SWCANMessages.WhoursPerPayment=None
-						SWCANMessages.RequiredPaymentAmount=None
+					# don't check again until a new offer actually comes in
+					SWCANMessages.Rate=None
+					SWCANMessages.RequiredPaymentAmount=None
 
-	#provide more detail in outputs on why was not accepted
-
-
+					# TODO: provide more detail in outputs on why was not accepted
 
 				else:
-					logger.info('waiting for offer')
-					pass
+					#logger.info('waiting for offer')
+					GUI.StatusAdd(SmallText='Waiting for Sale Terms Offer')
+
 			else:
-				logger.info('no voltage or current found yet')
-				pass
-
-
+				#logger.info('no voltage or current found yet')
+				GUI.StatusAdd(SmallText='Waiting for Car\'s Voltage and Current Reading')
 
 		else:
 			#logger.info('no proximity')
@@ -769,8 +455,9 @@ while True:
 
 
 
-
+################################################################
 	# shutdown logic
+################################################################
 
 		if not ThreadManager.ShutdownRequested and GUI.stopped() and not GUI.is_alive():
 			logger.info('GUI triggered shutdown request')
@@ -792,7 +479,9 @@ while True:
 			else:
 				logger.debug('all threads shut down on their own without being asked')
 				break
-#also add a check for one thread shut down on it's own and then force shutdown of everything since things probably won't work right with a dead thread?????? that could then generalize things a bit because wouldn't need to specifically check for the GUI thread to have stopped?
+			# TODO: also add a check for one thread shut down on it's own and then force shutdown of everything since things probably
+			#       won't work right with a dead thread?? that could then generalize things a bit because wouldn't need to specifically
+			#       check for the GUI thread to have stopped?
 
 	except (KeyboardInterrupt, SystemExit):
 

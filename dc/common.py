@@ -17,7 +17,7 @@ from os import makedirs,environ
 from os.path import isfile,isdir
 from helpers2 import RoundAndPadToString,FullDateTimeString,FormatTimeDeltaToPaddedString,SetPrintWarningMessages
 from textwrap import indent,dedent
-from threading import Thread
+from threading import Thread, Event
 from .SocketHelpers import PackTopicAndJSONAndSend
 from .GUI import GUIClass					# might want to rename this module since GUI is used below for the actual GUI object?
 from dc.m3 import m3, getCANvalue
@@ -29,7 +29,7 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
 from yaml import safe_load
 import can, isotp
-
+from collections import deque
 
 from smtplib import SMTP
 from socket import gethostname
@@ -46,7 +46,7 @@ from email.utils import COMMASPACE, formatdate,make_msgid
 
 
 ################################
-# need to clean this up and make a smarter way to detect if running on raspi or not
+# TODO: need to clean this up and make a smarter way to detect if running on raspi or not
 
 try:
 	from gpiozero import LED               # https://gpiozero.readthedocs.io/
@@ -55,10 +55,6 @@ except:
 	pass
 
 ########################################################################################
-
-
-
-
 
 
 
@@ -89,18 +85,6 @@ CatchKill()
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 ################################################################
 # define party mappings
 ################################################################
@@ -113,7 +97,6 @@ PartyMappings = {
 			'lnd-grpc-test-Buyer': 'Buyer',
 			'lnd-grpc-test-Seller': 'Seller',
 		}
-
 
 ################################################################
 
@@ -144,26 +127,6 @@ else:
 	TheDataArchiveFolder=Path(TheDataFolder) / 'DataArchive'
 
 ################################################################
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -214,9 +177,6 @@ class PreciseTimeFormatterWithColorizedLevel(logging.Formatter):
 
 		return super(PreciseTimeFormatterWithColorizedLevel, self).format(record, *args, **kwargs)
 
-
-
-
 #console_log_level="info"
 console_log_level="debug"
 logfile_log_level="debug"
@@ -235,14 +195,12 @@ console.setLevel(console_log_level.upper())
 ColorizeConsole=sys.stdout.isatty()				# if directed to a tty colorize, otherwise don't (so won't get escape sequences in systemd logs for example)
 console.setFormatter(PreciseTimeFormatterWithColorizedLevel(fmt=FormatStringTemplate, color=ColorizeConsole))
 
-
 logfile = logging.FileHandler(TheDataFolder+"debug.log")
 logfile.setLevel(logfile_log_level.upper()) # only accepts uppercase level names
 logfile.setFormatter(PreciseTimeFormatterWithColorizedLevel(fmt=FormatStringTemplate, color=False))
 
 logger.addHandler(console)
 logger.addHandler(logfile)
-
 
 # needs to be after creating TheDataFolder so it has a place to write to but not waiting until reading TheConfigFile, because always want to write this, regardless of the value of DebugLevel
 logger.info('--------------------- startup ! ---------------------')
@@ -251,32 +209,50 @@ logger.info('--------------------- startup ! ---------------------')
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ################################################################
 # general functions
 ################################################################
 
+class ThreadManagerClass:
+	def __init__(self):
+		self.ThreadList=[]
+		self.JoinTimeout=10
+		self.ShutdownRequested=False
+		self.CleanShutdown=True
+
+	def AddThread(self,TheThread):
+		self.ThreadList.append(TheThread)
+
+	def StopThreads(self):
+		logger.info('shutdown requested')
+		self.ShutdownRequested=True
+
+		logger.debug('shutting threads down')
+
+		# tell all threads to stop
+		for TheThread in self.ThreadList:
+			TheThread.stop()
+
+		# now, wait for them to stop
+		# note: if .join is not used with GUI, python tries too quit before the stop command is received by the thread and it gracefully shutdown and then it takes longer for tk to timeout and close the interpreter (it seems that is what is going on at least).
+
+		# note: .join(self.JoinTimeout) returns after self.JoinTimeout seconds OR when the thread joins/quits, whichever is sooner.
+		# so, need to check .is_alive() to see if the thread actually is still running.
+
+		for TheThread in self.ThreadList:
+			TheThread.join(self.JoinTimeout)
+
+		logger.debug('threads should be shut down')
+
+	def AnyThreadAlive(self):
+		for TheThread in self.ThreadList:
+			if TheThread.is_alive():
+				return True
+		else:
+			return False
+
 
 class LogData:
-
 	def __init__(self,Meter,GUI):
 
 		# assign variables passed on initialization to the class
@@ -313,8 +289,6 @@ class LogData:
 		self.DataLogFileHandle.write(ColumnHeaders)
 
 
-
-
 	def LogTabularDataAndMessages(self):
 
 		# want all time references to be exactly the same, so use this moment as the reference.
@@ -329,7 +303,7 @@ class LogData:
 		StatusMessage += '\n'
 		StatusMessage += 'Energy Received: '+ RoundAndPadToString(self.Meter.EnergyDelivered,0)+' W*hours,   '
 		StatusMessage += 'Energy Cost: '+RoundAndPadToString(self.Meter.EnergyCost,0)+' sats,   '
-		StatusMessage += 'Credit Remaining: ' + RoundAndPadToString(self.Meter.EnergyPayments-self.Meter.EnergyCost,0)+' sats'
+		StatusMessage += 'Credit Remaining: ' + RoundAndPadToString(self.Meter.SettledPayments-self.Meter.EnergyCost,0)+' sats'
 		StatusMessage += '\n'
 		StatusMessage += 'Required Rate: '+RoundAndPadToString(self.Meter.RecentRate*1000,0)+' sat/(kW*hour),   '
 		if self.Meter.BuyOfferTerms['RateInterpolator'] is not None:
@@ -341,14 +315,13 @@ class LogData:
 		StatusMessage += 'Remaining:'+FormatTimeDeltaToPaddedString(self.Meter.SellOfferTerms['OfferStopTime']-CurrentTime.timestamp())+',  '
 		StatusMessage += 'Period #:'+RoundAndPadToString(self.Meter.SalePeriods,0)
 		StatusMessage += '\n'
-		StatusMessage += 'Total Payments: '+RoundAndPadToString(self.Meter.EnergyPayments,0)+' sats,   '
+		StatusMessage += 'Total Payments: '+RoundAndPadToString(self.Meter.SettledPayments,0)+' sats,   '
 		StatusMessage += 'Number Payments: '+RoundAndPadToString(self.Meter.NumberOfPaymentsReceived,0)+',   '
 		StatusMessage += 'Session Time: '+self.GUI.ChargeTimeText
 		StatusMessage  = '\n' + indent(StatusMessage,' '*30)	#*35)
 		StatusMessage += '\n'
 		logger.info(StatusMessage)
 #TODO: add some of this information to the GUI that is not already there
-
 
 
 		## write data to a TAB delimited text file for data analysis ##
@@ -375,11 +348,10 @@ class LogData:
 			DataString += RoundAndPadToString(-1,4)								+ '\t'		# N/A for the seller
 
 		DataString += RoundAndPadToString(self.Meter.EnergyCost,0)							+ '\t'		# EnergyCost [sat]
-		DataString += RoundAndPadToString(self.Meter.EnergyPayments,0)						+ '\t'		# Total Payment Amount [sat]
+		DataString += RoundAndPadToString(self.Meter.SettledPayments,0)						+ '\t'		# Total Payment Amount [sat]
 		DataString += RoundAndPadToString(self.Meter.NumberOfPaymentsReceived,0)							+ '\t'		# Total Number of Payments
 
 		self.DataLogFileHandle.write(DataString+'\n')
-
 
 	def close(self):
 		logger.debug('closing DataLogFileHandle for '+self.DataLogFile)
@@ -407,7 +379,6 @@ class UpdateVariables(Thread):
 
 	def run(self):
 
-
 		LoopCounter=0
 		SleepTime=0.25
 		ZMQPublishPeriod=10.0
@@ -425,14 +396,14 @@ class UpdateVariables(Thread):
 			self.GUI.EnergyDelivered=self.Meter.EnergyDelivered
 			self.GUI.RecentRate=self.Meter.RecentRate
 			self.GUI.EnergyCost=self.Meter.EnergyCost
-			self.GUI.EnergyPayments=self.Meter.EnergyPayments
+			self.GUI.SettledPayments=self.Meter.SettledPayments
 
 			if self.Mode=='buyer':
 				if self.Meter.ResponseReceived:
-					self.GUI.BigStatus='Power ON'		#assume power is on if the meter is responding, but need to make this more exact!!!!!!!!!!!!!!!!
+					self.GUI.StatusAdd(BigText='Power ON')		#assume power is on if the meter is responding, but need to make this more exact!!!!!!!!!!!!!!!!
 
-				elif self.GUI.BigStatus!='Power Expected':	#also need to make this smarter!!!!!!!!!!!!!!
-					self.GUI.BigStatus='Power OFF'
+				elif self.GUI.BigStatusQueue[0][0]!='Power Expected':					# need a more reliable way to do this??? better to use `GUI.BigStatusTextv.get()` or is there an even more explicit way??
+					self.GUI.StatusAdd(BigText='Power OFF')
 
 				if LoopCounter>=ZMQPublishPeriod/SleepTime:
 					LoopCounter=0
@@ -449,13 +420,255 @@ class UpdateVariables(Thread):
 			sleep(SleepTime)
 
 
+class SWCANMessagesClass(Thread):
+	def __init__(self,  GUI=None):
+		super(SWCANMessagesClass, self).__init__()
+		self._stop_thread = Event()
+
+		self.GW=1.0*10**9		# W
+
+		self.message=None
+		self.Rate=None
+		self.RequiredPaymentAmount=None
+		self.OfferResponseReceived=None
+
+		self.daemon=True	# using daemon mode so control-C will stop the script and the threads and .join() can timeout and if the main thread crashes, then it will all crash and restart automatically (by systemd).
+
+		self.start()			# auto start on initialization
+
+	def stop(self):
+		logger.debug('SWCANMessagesClass thread stop requested')
+		self._stop_thread.set()
+
+	def send(self, arbitration_id, data):
+		return SWCAN.send(can.Message(arbitration_id=arbitration_id, data=data, is_extended_id=False))
+
+	def send_sale_offer(self, Rate, RequiredPaymentAmount):
+		self.send(
+					arbitration_id = 1998,
+					data = (
+								int(Rate*self.GW).to_bytes(4, byteorder='little') +					# convert sat/(W*hour) to sat/(GW*hour) and then to bytes
+								int(RequiredPaymentAmount).to_bytes(4, byteorder='little')			# sat
+							)
+				)
+
+	def run(self):
+
+		logger.info('initialized SWCANMessagesClass thread')
+
+		while True:
+			try:
+				# according to https://github.com/hardbyte/python-can/issues/768 there is some kind of buffer. not sure what it actually is
+				# but since the frequency of all messages of interest is low after applying the filter, hoping it is good enough for now.
+				# need to time out so can break out of the loop and cleanly shutdown if there are no messages on the bus
+				# listening for SWCAN messages even if not Proxmity because if there is no proximity, there will just be nothing there.
+				self.message = SWCAN.recv(timeout=0.5)
+				#logger.debug('SWCAN message received: ' + str(self.message))
+
+			except:
+				logger.exception('error receiving SWCAN message')
+				sleep(5)
+			else:
+
+				try:
+					if (self.message is not None):
+						if (self.message.arbitration_id == 1998):							#offer received
+							logger.debug('Rate and RequiredPaymentAmount SWCAN message received: ' + str(self.message))
+							self.Rate=int.from_bytes(self.message.data[0:4],byteorder='little')/self.GW					# convert bytes to sat/(GW*hour) and then to sat/(W*hour) offered
+							self.RequiredPaymentAmount=int.from_bytes(self.message.data[4:8],byteorder='little')		# sat
+
+						elif (self.message.arbitration_id == 1999):							#offer response
+							logger.debug('OfferResponseReceived SWCAN message received: ' + str(self.message))
+							self.OfferResponseReceived = self.message.data[0]==1					#don't really need to convert to int since hex works fine for a 0 vs 1
+
+						elif (self.message.arbitration_id == 0x3d2) or (self.message.arbitration_id == m3.get_message_by_name('ID31CCC_chgStatus').frame_id) or (self.message.arbitration_id == m3.get_message_by_name('ID32CCC_logData').frame_id):
+							# not doing anything with these messages right now.
+							pass
+
+						else:
+							logger.debug('unknown SWCAN message received: ' + str(self.message))
+							pass
+					else:
+						#logger.debug('no SWCAN message received')
+						pass
+				except:
+					logger.exception('error decoding SWCAN message')
+			if self._stop_thread.is_set():
+				logger.debug('SWCANMessagesClass thread stop request received')
+				break
+		logger.info('stopped SWCANMessagesClass thread')
 
 
 
+class TWCANMessagesClass(Thread):
+	def __init__(self,  GUI=None):
+		super(TWCANMessagesClass, self).__init__()
+		self._stop_thread = Event()
+
+		self.message=None
+		self.TESLA_SWCAN_ESTABLISHED=False
+		self.CHG_PROXIMITY_LATCHED=False
+		self.AC_CHARGE_ENABLED=False
+		self.TotalWhoursCharged=-1
+		self.Volts=None
+		self.MaxAmps=0
+		self.Amps=None
+		self.StateOfCharge=0
+
+		self.daemon=True	# using daemon mode so control-C will stop the script and the threads and .join() can timeout and if the main thread crashes, then it will all crash and restart automatically (by systemd).
+
+		self.start()			# auto start on initialization
+
+	def stop(self):
+		logger.debug('TWCANMessagesClass thread stop requested')
+		self._stop_thread.set()
+
+	def run(self):
+
+		logger.info('initialized TWCANMessagesClass thread')
+
+		while True:
+			try:
+				self.message = TWCAN.recv(timeout=0.5)		# need to time out so can break out of the loop and cleanly shutdown if there are no messages on the bus
+			except:
+				logger.exception('error receiving TWCAN message')
+				sleep(5)
+			else:
+				try:
+					#logger.debug('TWCAN data received: '+str(self.message))
+
+					#####################################################################
+					# don't need proximity for these things since they come from TWCAN
+					#####################################################################
+
+					if (self.message is not None):
+
+						# NOTE: remember when adding messages here to add to `can_filters` in `common.py`, otherwise the messages will be ignored
+
+						if (m3.get_message_by_name('ID21DCP_evseStatus').frame_id == self.message.arbitration_id):
+
+							self.MaxAmps=getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_pilotCurrent')
+
+							self.TESLA_SWCAN_ESTABLISHED=(getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_teslaSwcanState')=="TESLA_SWCAN_ESTABLISHED")
+							#logger.debug('TESLA_SWCAN_ESTABLISHED: '+str(self.TESLA_SWCAN_ESTABLISHED))
+
+							self.CHG_PROXIMITY_LATCHED=(getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_proximity')=="CHG_PROXIMITY_LATCHED")
+
+							# NOTE: in the last year with some Tesla software changes it now seems to use AC_CHARGE_CONNECTED_CHARGE_BLOCKED for most of the time
+							# with these changes there is also a graceful stop when the charger tells it to stop charging instead of the car and charger faulting out.
+							# this came around the same time as the keep power acessory on option was added.
+							# need to investigate this behaviour a bit more. also need to look into sleep mode more and see what is going on and if the new always on accessory power option fixes some other things too.......
+							if getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_ENABLED" or getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_CONNECTED_CHARGE_BLOCKED":
+								self.AC_CHARGE_ENABLED=True
+							elif getCANvalue(self.message.data,'ID21DCP_evseStatus','CP_acChargeState')=="AC_CHARGE_STANDBY":
+								self.AC_CHARGE_ENABLED=False
+							else:
+								#don't know, need to handle this better!
+								pass
+
+						#elif (m3.get_message_by_name('ID292BMS_SOC').frame_id == self.message.arbitration_id):
+						#	# NOTE, this is a few percent higher than what actually comes up in the car. there are other percent based SOC values, but they are even higher.
+						#	# NOTE2: this message seems to be changed in recent software versions and gives
+						#	# `ValueError: Short data` (seems to be 4 bytes now instead of 8?)
+						# 	# so can no longer use it and now using, ID33AUI_rangeSOC, UI_Range, but see notes on that below.
+						#	self.StateOfCharge=getCANvalue(self.message.data,'ID292BMS_SOC','SOCUI292')
+
+						elif (m3.get_message_by_name('ID33AUI_rangeSOC').frame_id == self.message.arbitration_id):
+							# NOTE: ID33AUI_rangeSOC, UI_Range does match what is in the car, but it is in units of miles.
+							# trying to simply convert to percent, but this could vary based on car model, age, and battery temperature? need to further investigate...
+							MaxMiles=(231/86)*100.0
+							self.StateOfCharge=(getCANvalue(self.message.data,'ID33AUI_rangeSOC','UI_Range')/MaxMiles)*100
+
+						#can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
+						#also, if picking up on SW CAN, need to do it after the "if Proximity:" statement below.
+
+						elif (self.message.arbitration_id == 0x3d2):				#0x syntax seems to automatically convert to an integer.
+							#Model3CAN.dbc seems to have this mixed up with kWhoursDischarged? can fix Model3CAN.dbc, but just keeping it this way as an excersise on how decoding actually works.
+							self.TotalWhoursCharged=int.from_bytes(self.message.data[0:4],byteorder='little')		#seems to include regen?
+							self.TotalWhoursDischarged=int.from_bytes(self.message.data[4:8],byteorder='little')		#not needed, but just keeping in here so understand what the rest of the message contains
+
+						elif (m3.get_message_by_name('ID31CCC_chgStatus').frame_id == self.message.arbitration_id):
+							#self.Volts=getCANvalue(self.message.data,'ID31CCC_chgStatus','CC_line1Voltage')
+							#self.MaxAmps=getCANvalue(self.message.data,'ID31CCC_chgStatus','CC_currentLimit')
+							pass
+
+						elif (m3.get_message_by_name('ID32CCC_logData').frame_id == self.message.arbitration_id):
+							if getCANvalue(self.message.data,'ID32CCC_logData','CC_logIndex') == 'Mux1':		#Signals available in the message seem to be dependent on this value.
+								#self.Amps=getCANvalue(self.message.data,'ID32CCC_logData','CC_conn1Current')
+								pass
+						#END can pickup on either TW or SW CAN, but better to pickup on TW can because the wall unit can't inject bogus data onto that bus
+
+						#####
+						# new values for voltage and current
+						#####
+						elif (m3.get_message_by_name('ID2C4PCS_logging').frame_id == self.message.arbitration_id):
+							if getCANvalue(self.message.data,'ID2C4PCS_logging','PCS_logMessageSelect') == 'PCS_LOG_CHG_1':			#Signals available in the message seem to be dependent on this value.
+								self.Volts=getCANvalue(self.message.data,'ID2C4PCS_logging','PCS_chgInputL2NVrms')
+							elif getCANvalue(self.message.data,'ID2C4PCS_logging','PCS_logMessageSelect') == 'PCS_LOG_CHG_3':		#Signals available in the message seem to be dependent on this value.
+								self.Amps=getCANvalue(self.message.data,'ID2C4PCS_logging','PCS_chgPhManCurrentToDist')
+						#####
+
+						elif (self.message.arbitration_id == 4):
+							# for some reason this is getting through `can_filters`, so ignore it and don't print "unknown TWCAN message received"
+							pass
+
+						else:
+							logger.debug('unknown TWCAN message received: ' + str(self.message))
+					else:
+						#logger.debug('no TWCAN message received')
+						pass
+					#####################################################################
+				except:
+					logger.exception('error decoding TWCAN message')
+			if self._stop_thread.is_set():
+				logger.debug('TWCANMessagesClass thread stop request received')
+				break
+		logger.info('stopped TWCANMessagesClass thread')
+
+
+class ReceiveInvoices(Thread):
+	#this class holds the InvoiceQueue object, receives invoices, operates in another thread in daemon mode, and will shutdown if the .stop() method is used.
+	#not sure if the socket should be opened and closed from within here or not. to be re-visited at a later time.
+	#not sure if socket needs to be re-created every time SWCAN comes up.
+	#see also:
+		# https://stackoverflow.com/questions/47912701/python-how-can-i-implement-a-stoppable-thread
+		# https://stackoverflow.com/questions/40382332/example-usages-of-the-stoppablethread-subclass-of-pythons-threading-thread
+		# https://github.com/python/cpython/blob/2.7/Lib/threading.py#L743
+		# https://stackoverflow.com/questions/27102881/python-threading-self-stop-event-object-is-not-callable
+
+	def __init__(self,  *args, **kwargs):
+		super(ReceiveInvoices, self).__init__(*args, **kwargs)
+		self._stop_thread = Event()
+		self.InvoiceQueue=deque()
+		self.daemon=True		# using daemon mode so control-C will stop the script and the threads.
+		logger.info('listening on SWCAN for new invoices')
+		self.start()			# auto start on initialization
+
+	def stop(self):
+		logger.debug('ReceiveInvoices thread stop requested')
+		self._stop_thread.set()
+
+	def stopped(self):
+		return self._stop_thread.is_set()
+
+	def run(self):
+		while True:
+			try:
+				NewInvoice=SWCAN_ISOTP.recv()		#SWCAN_ISOTP is set to timeout every 0.1 seconds, so it automatically sleeps for us
+			except:
+				logger.exception('error with SWCAN_ISOTP.recv')
+				sleep(5)
+			else:
+				if NewInvoice is not None:
+					self.InvoiceQueue.append(NewInvoice.decode())		# SWCAN_ISOTP receives data as binary, so need to run .decode() to convert it back to a string.
+					logger.info('new invoice received and added to the queue. total outstanding invoices is now '+str(len(self.InvoiceQueue)))
+			if self._stop_thread.is_set():
+				break
+
+		logger.info('stopped ReceiveInvoices thread')
 
 
 class SMTPNotification(Thread):
-
 	def __init__(self,subject,text):
 		super(SMTPNotification, self).__init__()
 		self.daemon=True		# using daemon mode so control-C will stop the script and the threads.
@@ -464,7 +677,6 @@ class SMTPNotification(Thread):
 		self.text=text
 
 		self.start()			# auto start on initialization
-
 
 	def run(self):
 
@@ -509,43 +721,24 @@ class SMTPNotification(Thread):
 				except:
 					logger.exception('error sending e-mail. waiting 5 seconds and trying again.')
 					sleep(5)
-
 		except:
 			logger.debug('e-mail not configured properly, not sending e-mail notification')
 
 
-
-
-
-def LogAndSmallStatusUpdate(Message,GUI):
-	GUI.SmallStatus=Message
-	logger.debug(Message)
+def LogAndSmallStatusUpdate(Text, DisplayTime=0):
+	GUI.StatusAdd(SmallText=Text, MinDisplayTime=DisplayTime)
+	logger.debug(Text.replace('\n',' '))
 
 
 def WaitForTimeSync(GUI):
-	GUI.BigStatus='Clock Not Set'
-	LogAndSmallStatusUpdate('Waiting for clock to be synchronized with NTP server.',GUI)
+	GUI.StatusAdd(BigText='Clock Not Set')
+	LogAndSmallStatusUpdate('Waiting for clock to be synchronized with NTP server.', 1)
 
 	while not SystemBus().get(".timedate1").NTPSynchronized:
 		sleep(0.1)
 
-	GUI.BigStatus='Clock Set'
-	LogAndSmallStatusUpdate('Clock is now synchronized with NTP server.',GUI)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+	GUI.StatusAdd(BigText='Clock Set')
+	LogAndSmallStatusUpdate('Clock is now synchronized with NTP server.', 1)
 
 
 if	(
@@ -592,20 +785,16 @@ else:
 # set and create directories
 ################################################################
 
-
 # needs to be after loading configuration since setLevel() needs to know the value of DebugLevel
 logger.info('DataFolder set to '+TheDataFolder)
 if MadeNewDataFolder:
 	# couldn't write this until there was a place to write it to, so had to remember and then write when it was possible and setLevel() is already run.
 	logger.info(TheDataFolder+' did not exist, so created it!')
 
-
 logger.info('DataArchiveFolder set to '+str(TheDataArchiveFolder))		# not creating this folder here. instead, anything that needs to write here is responsible for making sure it exists.
 
 TheDataLogFolder=TheDataArchiveFolder / 'DataLogs'
 logger.info('TheDataLogFolder set to '+str(TheDataLogFolder))		# not creating this folder here. instead, anything that needs to write here is responsible for making sure it exists.
-
-
 
 ################################################################
 
@@ -619,9 +808,6 @@ logger.info('TheDataLogFolder set to '+str(TheDataLogFolder))		# not creating th
 
 
 logger.info('mode: '+str(mode))
-
-
-
 
 if mode in PartyMappings:
 	logger.info('Party: '+PartyMappings[mode])
@@ -638,7 +824,17 @@ if mode in PartyMappings:
 		LNDhost=ConfigFile[PartyMappings[mode]]['LNDhost']
 
 	lnd = LNDClient(LNDhost)
-	logger.info('connected to lnd node '+lnd.host+' at block height '+str(lnd.get_info().block_height))
+
+	# different restricted macaroons seem to have different gRPC calls that allow them to get the block height
+	# TODO: see about making more custom restricted macaroons that can allow this to be the same for both Buyer and Seller
+	if PartyMappings[mode] == 'Buyer':
+		# assumes a restricted litd account is used
+		logger.info('connected to lnd node '+lnd.host+' at block height '+str(lnd.get_info().block_height))
+	elif PartyMappings[mode] == 'Seller':
+		# assumes an invoice macaroon is used
+		logger.info('connected to lnd node '+lnd.host+' at block height '+str(lnd.get_best_block().block_height))
+	else:
+		raise Exception('unknown PartyMappings mode')
 
 	################################################################
 
@@ -650,7 +846,7 @@ if mode in PartyMappings:
 	if mode == 'car' or mode == 'wall':
 
 		################################################################
-		# initialize GPIO
+		# initialize GPIO (digital outputs)
 		################################################################
 
 		SWCAN_Relay = LED(16)
@@ -661,24 +857,21 @@ if mode in PartyMappings:
 		################################################################
 
 
-
 		################################################################
 		# initialize the SWCAN bus
 		################################################################
 
-		can_Message = can.Message		# make it so this can be imported by other things importing SWCAN and TWCAN because don't think could import can.Message (but maybe should test it!!!!!!!)
-
-		SWCAN = can.interface.Bus(channel=ConfigFile[PartyMappings[mode]]['SWCANname'], bustype='socketcan',can_filters=[	#only pickup IDs of interest so don't waste time processing tons of unused data
-												{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
-												{"can_id": 1998, "can_mask": 0x7ff, "extended": False},		#wall offer
-												{"can_id": 1999, "can_mask": 0x7ff, "extended": False},		#car acceptance of offer
-												{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
-												{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
-												])
+		SWCAN = can.interface.Bus(channel=ConfigFile[PartyMappings[mode]]['SWCANname'], bustype='socketcan', receive_own_messages=True,
+											can_filters=[	#only pickup IDs of interest so don't waste time processing tons of unused data
+															{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
+															{"can_id": 1998, "can_mask": 0x7ff, "extended": False},		#wall offer
+															{"can_id": 1999, "can_mask": 0x7ff, "extended": False},		#car acceptance of offer
+															{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
+															{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
+														]
+									)
 
 		################################################################
-
-
 
 		################################################################
 		#initialize CAN ISOTP
@@ -701,14 +894,7 @@ if mode in PartyMappings:
 		SWCAN_ISOTP.set_fc_opts(stmin=25, bs=10)		#see https://can-isotp.readthedocs.io/en/latest/isotp/socket.html#socket.set_fc_opts . note: car used to use stmin=5 but don't remember why
 		SWCAN_ISOTP.bind(ConfigFile[PartyMappings[mode]]['SWCANname'], isotp.Address(rxid=RXID[mode], txid=TXID[mode]))
 
-
-
 		################################################################
-
-
-
-
-
 
 
 	if mode == 'car':
@@ -716,24 +902,26 @@ if mode in PartyMappings:
 		################################################################
 		# initialize the CAN bus
 		################################################################
-		TWCAN = can.interface.Bus(channel=ConfigFile[PartyMappings[mode]]['TWCANname'], bustype='socketcan',can_filters=[
-												{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
-												{"can_id": m3.get_message_by_name('ID21DCP_evseStatus').frame_id, "can_mask": 0x7ff, "extended": False},
-												{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
-												{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
+		TWCAN = can.interface.Bus(channel=ConfigFile[PartyMappings[mode]]['TWCANname'], bustype='socketcan', receive_own_messages=True,
+												can_filters=[
+																{"can_id": 0x3d2, "can_mask": 0x7ff, "extended": False},	#battery charge/discharge
+																{"can_id": m3.get_message_by_name('ID21DCP_evseStatus').frame_id, "can_mask": 0x7ff, "extended": False},
+																{"can_id": m3.get_message_by_name('ID31CCC_chgStatus').frame_id, "can_mask": 0x7ff, "extended": False},
+																{"can_id": m3.get_message_by_name('ID32CCC_logData').frame_id, "can_mask": 0x7ff, "extended": False},
+																{"can_id": m3.get_message_by_name('ID2C4PCS_logging').frame_id, "can_mask": 0x7ff, "extended": False},
 
-												# see notes in `car` on why this is disabled
-												#{"can_id": m3.get_message_by_name('ID292BMS_SOC').frame_id, "can_mask": 0x7ff, "extended": False},
+																# see notes above in `TWCANMessagesClass` on why this is disabled
+																#{"can_id": m3.get_message_by_name('ID292BMS_SOC').frame_id, "can_mask": 0x7ff, "extended": False},
 
-												{"can_id": m3.get_message_by_name('ID33AUI_rangeSOC').frame_id, "can_mask": 0x7ff, "extended": False},
-
-												])
+																{"can_id": m3.get_message_by_name('ID33AUI_rangeSOC').frame_id, "can_mask": 0x7ff, "extended": False},
+															]
+								)
 		################################################################
 
 	elif mode == 'wall':
 
 		################################################################
-		# initialize the mcp3008
+		# initialize the mcp3008 (analog input)
 		################################################################
 
 		Vref=3.3
@@ -745,15 +933,7 @@ if mode in PartyMappings:
 		def ProximityAnalogVoltage():
 			return adc.read([mcp3008.CH0],Vref)[0]*3.2/2.2
 
-
-
 		################################################################
-
-
-
-
-
-
 
 
 if mode is not None and 'lnd-grpc-test' not in mode:
@@ -774,8 +954,6 @@ if mode is not None and 'lnd-grpc-test' not in mode:
 	parser.add_argument('--maximized', action='store_true',help="Start maximized (default: %(default)s).")
 	parser.add_argument('--geometry',type=str,help="Start with specific window size and position, i.e. 800x480+100+50 .")
 	arguments=parser.parse_args()
-
-
 
 	################################################################
 

@@ -3,7 +3,7 @@
 
 ###############################################################################
 ###############################################################################
-# Copyright (c) 2024, Andy Schroder
+# Copyright (c) 2025, Andy Schroder
 # See the file README.md for licensing information.
 ###############################################################################
 ###############################################################################
@@ -11,7 +11,7 @@
 
 
 
-from time import sleep
+from time import sleep, time
 from datetime import datetime,timedelta
 
 import threading,os,logging,sys,subprocess
@@ -21,7 +21,7 @@ from tkinter import Tk,StringVar,Label,CENTER,Frame,LEFT,BOTH
 
 from helpers2 import FormatTimeDeltaToPaddedString,RoundAndPadToString,FullDateTimeString
 
-
+from collections import deque
 
 
 import qrcode
@@ -31,13 +31,7 @@ import qrcode
 logger = logging.getLogger(__name__)
 
 
-
-
 TitleText=False
-
-
-
-
 
 
 
@@ -47,20 +41,16 @@ class GUIClass(threading.Thread):
 	#this class operates in another thread in daemon mode, and will shutdown if the .stop() method is used.
 	#see also notes about stoppable threads in the ReceiveInvoices class
 
-
 	def __init__(self, arguments, *args, **kwargs):
 		super(GUIClass, self).__init__(*args, **kwargs)
 		self._stop_event = threading.Event()
 
 		self.daemon=True		# using daemon mode so control-C will stop the script and the threads and .join() can timeout.
 
-
 		#initialize variables, trying to make them match the main scripts initial values, although don't know if it really matters
 		self.Volts=0
 		self.Amps=0
 		self.Power=0
-		self.BigStatus=''
-		self.SmallStatus=''
 		self.EnergyDelivered=0
 
 		self.SettledPayments=0
@@ -68,17 +58,14 @@ class GUIClass(threading.Thread):
 		self.CanceledPayments=0
 		self.CreditRemaining=0
 
-
 		self.EnergyCost=0
 		self.RecentRate=0
 		self.RequiredPaymentAmount=0
 		self.ChargeStartTime=-1
 		self.ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=0))
 
-
 		self.HTLCTimeRemaining=0
 		self.HTLCTimeRemainingText=''
-
 
 		self.MaxAmps=0
 
@@ -86,16 +73,14 @@ class GUIClass(threading.Thread):
 
 		self.DCGeneratorVoltage=0
 
-
 		self.OLDQRLink='initial'	# make it something different so as to trigger a blank image to be generated
 		self.QRLink=None
 
 		self.InvoiceExpirationText=''
 
-
 		self.arguments=arguments
 
-
+		self.StatusReset()
 
 	def stop(self,event=None):
 		logger.info('GUI stop requested')
@@ -103,7 +88,6 @@ class GUIClass(threading.Thread):
 
 	def stopped(self):
 		return self._stop_event.is_set()
-
 
 	def update(self):
 		if not self.stopped():
@@ -115,18 +99,29 @@ class GUIClass(threading.Thread):
 
 
 	def toggleFullscreen(self,event=None):
-
 		if not self.Window.attributes('-fullscreen'):
 			self.Window.attributes('-fullscreen', True)
 		else:
 			self.Window.attributes('-fullscreen', False)
 
 
+	def StatusAdd(self, BigText=None, SmallText='', MinDisplayTime=0):			# NOTE: shortest display time is actually the refresh rate which is currently 0.5
+		if BigText is None:
+			# If BigText is not passed, we carry over the value from the last
+			# time. If SmallText is not passed, it just defaults to an empty string.
+			BigText=self.StatusQueue[-1][0]
+		if not (self.StatusQueue[-1][0]==BigText and self.StatusQueue[-1][1]==SmallText and self.StatusQueue[-1][2]==MinDisplayTime):
+			# only add to the queue if the Text/DisplayTime to be added is not already
+			# the last item in the queue. this way if we are somewhere in a loop
+			# that keeps signaling the same state, we don't accidentally add a bunch of
+			# entries for no reason and slow things down.
+			self.StatusQueue.append([BigText, SmallText, MinDisplayTime])
+	def StatusReset(self, BigText='', SmallText='', MinDisplayTime=0):
+		self.StatusQueue=deque([[BigText, SmallText, MinDisplayTime]])
+		self.StatusDisplayUpdate = time() + MinDisplayTime
 
 
 	def run(self):
-
-
 		self.Window=Tk()
 
 		self.Window.title(self.WindowTitle)
@@ -141,12 +136,6 @@ class GUIClass(threading.Thread):
 		self.Window.bind('f', self.toggleFullscreen)
 		self.Window.bind('F', self.toggleFullscreen)		# alternate solution if need to do this for a lot of keys: https://stackoverflow.com/questions/7402516/tkinter-case-insensitive-bind/24804104#24804104
 
-
-
-
-
-
-
 		# need to set the geometry before maximizing
 		if self.arguments.geometry is None:
 			# start with some sensible window geometry by default.
@@ -155,14 +144,12 @@ class GUIClass(threading.Thread):
 			# apply user defined geometry if passed on the command line.
 			self.Window.geometry(self.arguments.geometry)
 
-
 		if self.arguments.maximized:
 			self.Window.attributes('-zoomed', True)
 			# for some reason need to maximize AND update before entering full screen, otherwise it won't be maximized when exiting full screen
 			# this will cause a slight flicker as you see it transition from maximized to fullscreen on startup, but it is considered the
 			# more desireable outcome.
 			self.update()
-
 
 		if self.arguments.fullscreen:
 
@@ -174,24 +161,11 @@ class GUIClass(threading.Thread):
 			# always starts not in full screen, so can just run this.
 			self.toggleFullscreen()
 
-
 		# update now so can get the current window dimensions so that the scaling can be applied
 		self.update()
 
-
-
-
-
-
-
-
 		BigStatusTextv = StringVar()
 		SmallStatusTextv = StringVar()
-
-
-
-
-
 
 		self.Window.configure(background='white')#'green')
 
@@ -204,16 +178,10 @@ class GUIClass(threading.Thread):
 
 		MiddleFrame = Frame(MainFrame,background='white')
 		MiddleFrame.pack(side="top",anchor='s',fill='both',expand=True)
-
-
 		Frame(MiddleFrame,background='black').pack(side="top",anchor='n',fill='x')	#horizontal line
-
-
 		MiddleMiddleFrame = Frame(MiddleFrame,background='white')
 #		MiddleMiddleFrame.place(relx=0.5, rely=0.5, anchor=CENTER)
 		MiddleMiddleFrame.pack(side="top",anchor='n',fill='both',expand=False)
-
-
 
 		FooterFrame = Frame(MainFrame,background='white')#'grey')
 		FooterFrame.pack(side="bottom",anchor='s',fill='x')
@@ -230,11 +198,9 @@ class GUIClass(threading.Thread):
 		ClockFrame = Frame(RightFrame,background='white')#'blue')
 		ClockFrame.pack(side="top",fill='x')
 
-
 		DateTextv = StringVar()
 		DateText=Label(ClockFrame, background='white',textvariable=DateTextv)
 		DateText.pack(side="right",anchor='ne')
-
 
 		if TitleText:
 			BTCImageData = Image.open(os.path.join(os.path.dirname(__file__), "BitcoinLogoRound.png"))
@@ -245,37 +211,23 @@ class GUIClass(threading.Thread):
 			Header.place(relx=0.5, rely=0.5, anchor=CENTER)
 
 
-
-
-
 		BigStatusText=Label(MiddleMiddleFrame, background='white',textvariable=BigStatusTextv)
 		BigStatusText.pack(anchor='n')
 
 		SmallStatusText=Label(MiddleMiddleFrame,background='white',textvariable=SmallStatusTextv)
 		SmallStatusText.pack(anchor="n")
 
-
 		Frame(MiddleFrame,background='black').pack(side="top",anchor='n',fill='x')	#horizontal line
-
 
 		UnitSpecificationsv = StringVar()
 		UnitSpecifications=Label(BottomFrame,textvariable=UnitSpecificationsv,justify='left', background='white')#'red')
 		UnitSpecifications.pack(side='left',anchor='s')
 
-
-
 		OperatingConditionsv = StringVar()
 		OperatingConditions=Label(BottomFrame,textvariable=OperatingConditionsv,justify='left', background='white')#'red')
 		OperatingConditions.pack(side='right',anchor='s')
 
-
-
-
-
-
-
 #		Frame(FooterFrame,background='black').pack(side="top",anchor='n',fill='x')	#horizontal line
-
 
 		if TitleText:
 			WebsiteText=Label(FooterFrame,background='white',text='http://AndySchroder.com/DistributedCharge/')
@@ -285,57 +237,34 @@ class GUIClass(threading.Thread):
 			AUSimage = Label(FooterFrame,borderwidth=0)
 			AUSimage.pack(side="right", anchor="se")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 		InvoiceExpirationsv = StringVar()
 		InvoiceExpiration=Label(BottomFrame,textvariable=InvoiceExpirationsv,justify='center', background='white')#'red')
 		InvoiceExpiration.pack(side='bottom',anchor='s')
 
-
 		QRimage = Label(BottomFrame,borderwidth=10,background='white')#'black')
 		QRimage.pack(side='bottom',anchor="s")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 		while True:
 
 			DateTextv.set(FullDateTimeString(datetime.now()))
 
-			BigStatusTextv.set(self.BigStatus)				
-			SmallStatusTextv.set(self.SmallStatus)
+			if len(self.StatusQueue) > 1 and self.StatusDisplayUpdate < time():		# there is something waiting to be shown and the current message has been shown as long as it is supposed to be.
 
+				# forget about what is currently being displayed
+				self.StatusQueue.popleft()
 
+				# show the new message
+				BigStatusTextv.set(self.StatusQueue[0][0])
+				SmallStatusTextv.set(self.StatusQueue[0][1])
 
+				# set the time when the new message expires
+				self.StatusDisplayUpdate = time() + self.StatusQueue[0][2]
+			else:
+				# no other messages waiting to be shown or the current item hasn't been shown long enough, so leave the current message up longer
+				pass
 
-			# car.py and wall.py set Volts and Amps to None if there is no
+			# car and wall set Volts and Amps to None if there is no
 			# measurements available yet because don't want to integrate them
 			# and compute a bogus EnergyDelivered reading. however, here zero
 			# is just displayed.
@@ -363,8 +292,8 @@ class GUIClass(threading.Thread):
 							'\n'
 				)
 
-			UnitSpecificationsText+=	'Sale Rate:   '
 			if self.RecentRate>0:
+				UnitSpecificationsText+=	'Sale Rate:   '
 				UnitSpecificationsText+=RoundAndPadToString(self.RecentRate*1000,DecimalPlaces=0,LeftPad=5)+' sat/(kW*hour)'
 			UnitSpecificationsText+=	'\n'
 
@@ -375,11 +304,7 @@ class GUIClass(threading.Thread):
 
 			UnitSpecificationsv.set(UnitSpecificationsText)
 
-
-
-
-
-			if self.ChargeStartTime !=-1 and self.Connected is True:
+			if self.ChargeStartTime !=-1:
 				self.ChargeTimeText=FormatTimeDeltaToPaddedString(timedelta(seconds=round((datetime.now()-self.ChargeStartTime).total_seconds())))	#round to the nearest second, then format as a zero padded string
 
 			OperatingConditionsText=(
@@ -394,8 +319,7 @@ class GUIClass(threading.Thread):
 					'Canceled Deposits:'+RoundAndPadToString(self.CanceledPayments,DecimalPlaces=0,LeftPad=7)+'  sat\n'+
 					'Credit Remaining: '+RoundAndPadToString(self.CreditRemaining,DecimalPlaces=0,LeftPad=7)+'  sat\n'+
 					'Session Time:     '+self.ChargeTimeText+'\n'+
-#					'Remaining Time:   '+FormatTimeDeltaToPaddedString(self.HTLCTimeRemaining)+
-					'Remaining Time: '+self.HTLCTimeRemainingText+
+					'Remaining Time:   '+self.HTLCTimeRemainingText+
 					'\n'+
 					'\n'+
 					''
@@ -403,25 +327,7 @@ class GUIClass(threading.Thread):
 
 			OperatingConditionsv.set(OperatingConditionsText)
 
-
-
-
 			InvoiceExpirationsv.set(self.InvoiceExpirationText)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 			# adjust the scaling based on the window dimensions
@@ -439,62 +345,21 @@ class GUIClass(threading.Thread):
 
 #			print(self.screenscaling)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 			if self.OLDQRLink != self.QRLink:
-
 				self.OLDQRLink=self.QRLink
-
 				if self.QRLink is not None:
 					qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4,)
 					qr.add_data(self.QRLink)
 					qr.make(fit=True)
 					img = qr.make_image(fill_color="black", back_color="white")
-
 					ExtraImageScaling=0.6*.9
-
 					QRImageData_resized = img.resize((int(img.size[0]*self.screenscaling*ExtraImageScaling), int(img.height*self.screenscaling*ExtraImageScaling)),Image.LANCZOS)
-
 					QRPhotoImage=ImageTk.PhotoImage(QRImageData_resized)
-
-
 				else:
 					#blank image
 					QRPhotoImage=ImageTk.PhotoImage(Image.new("RGB", (10, 10), (255, 255, 255)))
-
-
 				QRimage.configure(image=QRPhotoImage)
 				QRimage.pack_configure(padx=(int(10*self.screenscaling),int(0*self.screenscaling)),pady=(int(0*self.screenscaling),int(0*self.screenscaling)))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 			# apply the scaling
 			MiddleFrame.pack_configure(pady=(int((30-20)*self.screenscaling),int((30-20)*self.screenscaling)))
@@ -502,9 +367,11 @@ class GUIClass(threading.Thread):
 			DateText.configure(font=('Arial', int(25*self.screenscaling), "bold"))
 			DateText.configure(padx=int(15*self.screenscaling))
 
-
 			if TitleText:
-				BTCImageData_resized = BTCImageData.resize((int(BTCImageData.width*self.screenscaling), int(BTCImageData.height*self.screenscaling)),Image.LANCZOS)		#think LANCZOS will give you a slightly different pixel count than requested because the request can be overconstrained if width and height don't have a common multiple(?) with self.screenscaling. need to research/think about more.
+				# NOTE: think LANCZOS will give you a slightly different pixel count than requested because the request can be overconstrained if
+				# width and height don't have a common multiple(?) with self.screenscaling. need to research/think about more.
+				BTCImageData_resized = BTCImageData.resize((int(BTCImageData.width*self.screenscaling), int(BTCImageData.height*self.screenscaling)),Image.LANCZOS)
+
 				BTCPhotoImage=ImageTk.PhotoImage(BTCImageData_resized)	#has to be on a separate line, can't be combine with the next, not sure why.
 				BTCimage.configure(image = BTCPhotoImage)
 				BTCimage.pack_configure(padx=(int(10*self.screenscaling),int(0*self.screenscaling)),pady=int(10*self.screenscaling))
@@ -512,11 +379,10 @@ class GUIClass(threading.Thread):
 				Header.configure(font=('Courier', int(80*self.screenscaling), "bold"))
 				Header.pack_configure(pady=(int(35*self.screenscaling),int(20*self.screenscaling)))
 
-
-			BigStatusText.configure(font=('Helvetica', int((40)*self.screenscaling*2.25/(1+self.BigStatus.count('\n')))))
+			BigStatusText.configure(font=('Helvetica', int((35)*self.screenscaling*2.25/(1+BigStatusTextv.get().count('\n')))))
 			BigStatusText.pack_configure(pady=(int(2*self.screenscaling),int(2*self.screenscaling)))
 
-			SmallStatusText.configure(font=('Helvetica', int(25*self.screenscaling)))
+			SmallStatusText.configure(font=('Helvetica', int(30*self.screenscaling)))
 			SmallStatusText.pack_configure(pady=(int(2*self.screenscaling),int(2*self.screenscaling)))
 
 			UnitSpecifications.configure(font=('Courier', int(20*self.screenscaling)))
@@ -530,32 +396,17 @@ class GUIClass(threading.Thread):
 			InvoiceExpiration.pack_configure(padx=(int(0*self.screenscaling),int(10*self.screenscaling)))
 			InvoiceExpiration.pack_configure(pady=(int(0*self.screenscaling),int(0*self.screenscaling)))
 
-
-
 			if TitleText:
 				WebsiteText.configure(font=('Courier', int(20*self.screenscaling)))
 				WebsiteText.pack_configure(padx=int(10*self.screenscaling),pady=int(10*self.screenscaling))
 
-				AUSImageData_resized = AUSImageData.resize((int(AUSImageData.width*self.screenscaling), int(AUSImageData.height*self.screenscaling)),Image.LANCZOS)		#think LANCZOS will give you a slightly different pixel count than requested because the request can be overconstrained if width and height don't have a common multiple(?) with self.screenscaling. need to research/think about more.
+				# NOTE: think LANCZOS will give you a slightly different pixel count than requested because the request can be overconstrained if
+				# width and height don't have a common multiple(?) with self.screenscaling. need to research/think about more.
+				AUSImageData_resized = AUSImageData.resize((int(AUSImageData.width*self.screenscaling), int(AUSImageData.height*self.screenscaling)),Image.LANCZOS)
+
 				AUSPhotoImage=ImageTk.PhotoImage(AUSImageData_resized)	#has to be on a separate line, can't be combine with the next, not sure why.
 				AUSimage.configure(image = AUSPhotoImage)
 				AUSimage.pack_configure(padx=int(10*self.screenscaling),pady=int(10*self.screenscaling))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 			# now update
 			if not self.update():
@@ -564,12 +415,6 @@ class GUIClass(threading.Thread):
 				sys.exit()
 
 			sleep(0.50)
-
-
-
-
-
-
 
 
 
