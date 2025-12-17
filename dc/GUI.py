@@ -298,7 +298,7 @@ class GUIClass(threading.Thread):
 			UnitSpecificationsText+=	'\n'
 
 			if self.RequiredPaymentAmount>0:
-				UnitSpecificationsText+=	'Payment Size: '
+				UnitSpecificationsText+=	'AutoPay Size: '
 				UnitSpecificationsText+=RoundAndPadToString(self.RequiredPaymentAmount,DecimalPlaces=0,LeftPad=4)+' sat'
 			UnitSpecificationsText+=	'\n'
 

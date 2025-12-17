@@ -69,7 +69,7 @@ PilotVoltageInsertedAndCarReadyTolerance=0.20
 
 CurrentRate_kW=100							# sat/(kW*hour)
 CurrentRate=CurrentRate_kW/1000				# sat/(W*hour)
-WhoursPerPayment=25							# W*hour/payment		# TODO: decide if it is better to make it seconds/payment instead?
+WhoursPerPayment=30							# W*hour/payment		# TODO: decide if it is better to make it seconds/payment instead?
 RequiredPaymentAmount=int(ceil(WhoursPerPayment*CurrentRate))		#sat/payment
 
 ####################
@@ -81,7 +81,7 @@ cltv_expiry=144
 
 # production
 BufferBlocks=25
-PrePayWhours=200_000
+PrePayWhours=250_000
 
 # test mode
 #BufferBlocks=cltv_expiry
