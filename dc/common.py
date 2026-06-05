@@ -655,13 +655,15 @@ class ReceiveInvoices(Thread):
 		while True:
 			try:
 				NewInvoice=SWCAN_ISOTP.recv()		#SWCAN_ISOTP is set to timeout every 0.1 seconds, so it automatically sleeps for us
+			except TimeoutError:
+				# no data was sent
+				pass
 			except:
 				logger.exception('error with SWCAN_ISOTP.recv')
 				sleep(5)
 			else:
-				if NewInvoice is not None:
-					self.InvoiceQueue.append(NewInvoice.decode())		# SWCAN_ISOTP receives data as binary, so need to run .decode() to convert it back to a string.
-					logger.info('new invoice received and added to the queue. total outstanding invoices is now '+str(len(self.InvoiceQueue)))
+				self.InvoiceQueue.append(NewInvoice.decode())		# SWCAN_ISOTP receives data as binary, so need to run .decode() to convert it back to a string.
+				logger.info('new invoice received and added to the queue. total outstanding invoices is now '+str(len(self.InvoiceQueue)))
 			if self._stop_thread.is_set():
 				break
 
