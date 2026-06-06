@@ -177,50 +177,52 @@ class NFCClass(Thread):
 
 
 	def run(self):
-		logger.info('starting NFC thread')
-		while not self.stopped_thread():
-			try:
-				if self.GUI is not None:		# if GUI is passed, read Link from there instead.
-					self.Link=self.GUI.QRLink
-				if self.Link is not None:
-					logger.info('starting NFC broadcast for '+self.Link)
-					with ContactlessFrontend(self.path) as clf:
 
-						# this way emulates a card/tag. works with old and new android and iphone.
-						clf.connect(card={'on-startup': self.on_startup, 'on-connect': self.on_card_connect, 'on-release': self.on_card_release,},terminate=self.stop_broadcast)
+		try:
+			logger.info('checking NFC reader/writer connection')
+			with ContactlessFrontend(self.path) as clf:
+				pass
 
-						##############################################################################################
-						# this way uses SNEP. it seems more reliable and works at longer distances, but doesn't work with newer android or iphone.
-						# UPDATE: seems as though card/tag emulation requires more CPU and the GUI was wasting a lot of CPU time
-						# regenerating QR codes that have not changed so fixed that to not regenerate a QR code if it has not
-						# changed and reliability and distance seems to have improved a bit and is now comparable to SNEP.
-						# only keeping this and the functions it depends on in the code here for reference.
-						##############################################################################################
+		except OSError as error:
+			logger.info('trouble with NFC reader/writer connection ('+str(error)+') ------ no NFC broadcasts will be attempted')
+			#logger.exception(error)
 
-						#clf.connect(llcp={'on-connect': self.connected},terminate=self.stop_broadcast)
-						##############################################################################################
+		else:
+			logger.info('NFC reader/writer found')
 
-					logger.info('stopped NFC broadcast')
+			logger.info('starting NFC loop')
+			while not self.stopped_thread():
+				try:
+					if self.GUI is not None:		# if GUI is passed, read Link from there instead.
+						self.Link=self.GUI.QRLink
+					if self.Link is not None:
+						logger.info('starting NFC broadcast for '+self.Link)
+						with ContactlessFrontend(self.path) as clf:
 
-				else:
-					sleep(.1)
+							# this way emulates a card/tag. works with old and new android and iphone.
+							clf.connect(card={'on-startup': self.on_startup, 'on-connect': self.on_card_connect, 'on-release': self.on_card_release,},terminate=self.stop_broadcast)
 
-			except OSError as error:
-				logger.exception(error)
-				break
+							##############################################################################################
+							# this way uses SNEP. it seems more reliable and works at longer distances, but doesn't work with newer android or iphone.
+							# UPDATE: seems as though card/tag emulation requires more CPU and the GUI was wasting a lot of CPU time
+							# regenerating QR codes that have not changed so fixed that to not regenerate a QR code if it has not
+							# changed and reliability and distance seems to have improved a bit and is now comparable to SNEP.
+							# only keeping this and the functions it depends on in the code here for reference.
+							##############################################################################################
 
-			except:
-				logger.exception('error with NFC, trying again')
-				sleep(1.5)
+							#clf.connect(llcp={'on-connect': self.connected},terminate=self.stop_broadcast)
+							##############################################################################################
+
+						logger.info('stopped NFC broadcast')
+
+					else:
+						sleep(.1)
+
+				except:
+					logger.exception('error with NFC, trying again')
+					sleep(1.5)
 
 		logger.info('stopped NFC thread')
-
-
-
-
-
-
-
 
 
 
