@@ -56,8 +56,9 @@ from math import ceil
 # define configuration related constants
 ################################################################
 
-ProximityVoltageInserted=1.5						# Voltage that indicates charge cable has been plugged in
-ProximityVoltageInsertedTolerance=0.05*2*2.5		# need the extra *2.5 for 208V power? was getting 1.289V every once and a while and not sure why! so, it was disconnecting and screwing everything up.
+ProximityVoltageInsertedNominal=1.5						# Voltage that indicates charge cable has been plugged in
+ProximityVoltageInsertedUpperTolerance=0.25
+ProximityVoltageInsertedLowerTolerance=0.75				# not sure why voltage seems to dip down so low sometimes while connected. Nominal current should be ~10mA, so seems like it should be stable. Is tesla doing some other communication on the proximity pin that is outside of the J1772 specification?
 
 StateB=False
 PilotVoltageInserted=9
@@ -565,7 +566,7 @@ while True:
 
 					logger.info("stable proximity confirmed")
 
-					if CurrentProximityAnalogVoltage > ProximityVoltageInserted-ProximityVoltageInsertedTolerance:		# it is a Tesla connecting because the proximity can be measured
+					if CurrentProximityAnalogVoltage > ProximityVoltageInsertedNominal-ProximityVoltageInsertedUpperTolerance:		# it is a Tesla connecting because the proximity can be measured
 						SWCAN_Relay.on()
 						logger.info("SWCAN relay energized")
 					else:
@@ -585,7 +586,7 @@ while True:
 
 		elif	(
 					(
-							(SWCAN_Relay.is_lit and (CurrentProximityAnalogVoltage < ProximityVoltageInserted-ProximityVoltageInsertedTolerance*2))		# SWCAN
+							(SWCAN_Relay.is_lit and (CurrentProximityAnalogVoltage < ProximityVoltageInsertedNominal-ProximityVoltageInsertedLowerTolerance))		# SWCAN
 						or
 							(PilotMaxVoltage > PilotVoltageInserted+PilotVoltageInsertedTolerance*2)													# J1772
 					)
@@ -610,7 +611,7 @@ while True:
 
 		elif	(
 					(
-							(SWCAN_Relay.is_lit and (CurrentProximityAnalogVoltage < ProximityVoltageInserted-ProximityVoltageInsertedTolerance*2))		# SWCAN
+							(SWCAN_Relay.is_lit and (CurrentProximityAnalogVoltage < ProximityVoltageInsertedNominal-ProximityVoltageInsertedLowerTolerance))		# SWCAN
 						or
 							(PilotMaxVoltage > PilotVoltageInserted+PilotVoltageInsertedTolerance*2)													# J1772
 					)
