@@ -386,6 +386,101 @@ class MeterClass(Thread):
 
 		logger.info('stopped MeterClass thread')
 
+
+
+
+class InvoiceManagerClass(Thread):
+
+	# invoices are sent in a separate thread so that charging can be stopped by the main loop if the buyer doesn't pay
+	# because the seller fails to get an invoice and send it to them **OR** the seller sent and invoice to
+	# the buyer and they failed to pay (either intentionally or unintentionally (the buyer doesn't
+	# have a way to know)).
+
+
+	def __init__(self,  *args, **kwargs):
+		super(InvoiceManagerClass, self).__init__(*args, **kwargs)
+		self._stop_thread = Event()
+
+		self.daemon=True		# using daemon mode so control-C will stop the script and the threads.
+
+		self.PendingInvoice=False
+
+		# initialize an empty subthread
+		self.SubThread=Thread()
+		self.SubThread.start()
+
+		self.start()			# auto start on initialization
+
+
+	def stop(self):
+		logger.debug('InvoiceManager thread stop requested')
+		self._stop_thread.set()
+
+
+	def send_function(self, RequiredPaymentAmount):
+
+		# set PendingInvoice so that the main loop won't call this function until the send completes AND the invoice is paid and PendingInvoice is reset to False.
+		self.PendingInvoice=True
+
+		# here the number of invoices is always 1 greater than the number paid
+		InvoiceNumber = Meter.NumberOfPaymentsReceived+1
+
+		GUI.StatusAdd(SmallText='Sending '+RoundAndPadToString(RequiredPaymentAmount,0)+' sat Payment Request Over Charge Cable' , MinDisplayTime=1)
+
+		while SWCAN_Relay.is_lit and not self._stop_thread.is_set():
+			try:
+				logger.info("trying to get invoice # "+str(InvoiceNumber))
+				self.OutstandingInvoice=lnd.AddAndWatchInvoice(RequiredPaymentAmount,memo='Distributed Charge Energy Payment')
+			except:
+				logger.exception("could not get a new invoice, trying again")
+				sleep(0.25)
+			else:
+				logger.info("got a new invoice")
+				break
+
+		while SWCAN_Relay.is_lit and not self._stop_thread.is_set():
+			try:
+				logger.info("sending invoice # "+str(InvoiceNumber)+" for "+str(RequiredPaymentAmount)+" satoshis over SW CAN ISOTP")
+				SWCAN_ISOTP.send(self.OutstandingInvoice.payment_request.encode())
+			except:
+				logger.exception("could not send invoice, trying again")
+				sleep(0.25)
+			else:
+				logger.info("sent new invoice for "+str(RequiredPaymentAmount)+" satoshis")
+				GUI.StatusAdd(SmallText=RoundAndPadToString(RequiredPaymentAmount,0)+' sat Payment Request Sent' , MinDisplayTime=1)
+				break
+
+
+	def send(self,RequiredPaymentAmount):
+
+		# only allow one sub thread at a time to be started (should already be
+		# enforced by PendingInvoice by the main loop)
+		self.SubThread.join()
+
+		# start a sub thread that run waits is waited for
+		# when ThreadManager requests threads to stop
+		# this is a workaround so that a common way to stop threads
+		# can be used here too.
+		self.SubThread = Thread(target=self.send_function, daemon=True, args=(RequiredPaymentAmount,))
+		self.SubThread.start()
+
+
+	def run(self):
+		logger.info('initialized InvoiceManager thread')
+		while True:
+			if self._stop_thread.is_set():
+				# wait for the sub thread to stop
+				self.SubThread.join()
+				break
+
+			sleep(0.5)
+		logger.info('stopped InvoiceManager thread')
+
+
+
+
+
+
 ################################################################
 
 
@@ -397,6 +492,7 @@ class MeterClass(Thread):
 SWCANMessages=SWCANMessagesClass()
 NFC=NFCClass(GUI)
 Meter=MeterClass()
+InvoiceManager=InvoiceManagerClass()
 
 ThreadManager=ThreadManagerClass()
 
@@ -404,6 +500,7 @@ ThreadManager.AddThread(GUI)
 ThreadManager.AddThread(SWCANMessages)
 ThreadManager.AddThread(NFC)
 ThreadManager.AddThread(Meter)
+ThreadManager.AddThread(InvoiceManager)
 ThreadManager.AddThread(TWCManager.MainThread)
 
 
@@ -617,14 +714,14 @@ while True:
 
 			else:
 				if OfferAccepted:
-						if PendingInvoice:
+						if InvoiceManager.PendingInvoice:
 							#check to see if the current invoice has been paid
 							try:
-								if OutstandingInvoice.state==1: 	# 'SETTLED'
+								if InvoiceManager.OutstandingInvoice.state==1: 	# 'SETTLED'
 
-									Meter.AddSettledPayment(OutstandingInvoice.value)
+									Meter.AddSettledPayment(InvoiceManager.OutstandingInvoice.value)
 
-									PendingInvoice=False
+									InvoiceManager.PendingInvoice=False
 									Meter.InitialInvoice=False							#reset every time just to make the logic simpler
 
 									logger.info("payment received, time since last payment received="+str(time()-LastPaymentReceivedTime)+"s")
@@ -637,7 +734,7 @@ while True:
 									# also, show SmallText for 5 seconds if we don't need to send another invoice right now (and assume we won't need to for another 5 seconds)
 									# or for 2 seconds if we know we know we need to send another invoice right now
 									# TODO: need to check and see if the LND GRPC gives an official time instead of this one.
-									GUI.StatusAdd(SmallText=RoundAndPadToString(OutstandingInvoice.value,0)+' sat Payment Received - ' + FullDateTimeString(datetime.now()), MinDisplayTime=5-(((Meter.EnergyCredit)<WhoursPerPayment*2*0.90))*3)
+									GUI.StatusAdd(SmallText=RoundAndPadToString(InvoiceManager.OutstandingInvoice.value,0)+' sat Payment Received - ' + FullDateTimeString(datetime.now()), MinDisplayTime=5-(((Meter.EnergyCredit)<WhoursPerPayment*2*0.90))*3)
 									GUI.StatusAdd(SmallText='')		# blank the previous message after its DisplayTime is over
 
 							except:
@@ -658,28 +755,10 @@ while True:
 						# also move this test into Meter as a boolean so above we don't have to repeat the formula above when deciding how
 						# long to display the payment received message.
 
-						if ((Meter.EnergyCredit)<WhoursPerPayment*2*0.90) and not PendingInvoice:
-							while True:
-								try:
-									logger.info("trying to get a new invoice")
-									OutstandingInvoice=lnd.AddAndWatchInvoice(RequiredPaymentAmount,memo='Distributed Charge Energy Payment')
-									logger.info("got a new invoice")
-									break
-								except:
-									logger.exception("could not get a new invoice, trying again")
-									sleep(.25)
+						if ((Meter.EnergyCredit)<WhoursPerPayment*2*0.90) and not InvoiceManager.PendingInvoice:
+							InvoiceManager.send(RequiredPaymentAmount)
 
-							try:
-								logger.info("sending invoice for "+str(RequiredPaymentAmount)+" satoshis")
-								SWCAN_ISOTP.send(OutstandingInvoice.payment_request.encode())			#send the new invoice using CAN ISOTP
-								logger.info("sent new invoice for "+str(RequiredPaymentAmount)+" satoshis")
-								GUI.StatusAdd(SmallText=RoundAndPadToString(RequiredPaymentAmount,0)+' sat Payment Requested' , MinDisplayTime=1)
-								PendingInvoice=True
-							except:
-								logger.exception("could not send invoice, failing")
-								raise
-
-						elif PendingInvoice:									#waiting for payment
+						elif InvoiceManager.PendingInvoice:									#waiting for payment
 							#logger.info("waiting for payment, and limit not yet reached")
 							sleep(.25)
 
@@ -696,25 +775,8 @@ while True:
 
 						FirstRequiredPaymentAmount=1*RequiredPaymentAmount				#sat, adjust multiplier if desire the first payment to be higher than regular payments.
 
-						while True:
-							try:
-								logger.info("trying to get a new (first) invoice")
-								OutstandingInvoice=lnd.AddAndWatchInvoice(FirstRequiredPaymentAmount,memo='Distributed Charge Energy Payment')
-								logger.info("got a new (first) invoice")
-								break
-							except:
-								logger.exception("could not get a new (first) invoice, trying again")
-								sleep(.25)
+						InvoiceManager.send(FirstRequiredPaymentAmount)
 
-						try:
-							logger.info("sending first invoice for "+str(FirstRequiredPaymentAmount)+" satoshis")
-							SWCAN_ISOTP.send(OutstandingInvoice.payment_request.encode())
-							logger.info("sent first invoice")
-							GUI.StatusAdd(SmallText=RoundAndPadToString(FirstRequiredPaymentAmount,0)+' sat Payment Requested' , MinDisplayTime=1)
-							PendingInvoice=True
-						except:
-							logger.exception("could not send first invoice, failing")
-							raise
 
 					elif (SWCANMessages.OfferResponseReceived is not None) and (not SWCANMessages.OfferResponseReceived):
 						OfferAccepted=False
