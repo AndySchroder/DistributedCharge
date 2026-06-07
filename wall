@@ -61,12 +61,14 @@ ProximityVoltageInsertedUpperTolerance=0.25
 ProximityVoltageInsertedLowerTolerance=0.75				# not sure why voltage seems to dip down so low sometimes while connected. Nominal current should be ~10mA, so seems like it should be stable. Is tesla doing some other communication on the proximity pin that is outside of the J1772 specification?
 
 StateB=False
-PilotVoltageInserted=9
-PilotVoltageInsertedTolerance=0.20
+PilotVoltageInsertedNominal=9
+PilotVoltageInsertedUpperTolerance=0.20
+PilotVoltageInsertedLowerTolerance=0.40
 
 StateC=False
-PilotVoltageInsertedAndCarReady=6
-PilotVoltageInsertedAndCarReadyTolerance=0.20
+PilotVoltageInsertedAndCarReadyNominal=6
+PilotVoltageInsertedAndCarReadyUpperTolerance=0.20
+PilotVoltageInsertedAndCarReadyLowerTolerance=0.40
 
 CurrentRate_kW=100							# sat/(kW*hour)
 CurrentRate=CurrentRate_kW/1000				# sat/(W*hour)
@@ -551,7 +553,7 @@ while True:
 
 		# TODO: need to do some other checking for SWCAN active because if so, then PilotMaxVoltage is not the way to know if it is actually connected
 
-		if (PilotMaxVoltage < PilotVoltageInserted+PilotVoltageInsertedTolerance) and (not Proximity):										# SWCAN and J1772 both begin with 12VDC and transition to PilotVoltageInserted
+		if (PilotMaxVoltage < PilotVoltageInsertedNominal+PilotVoltageInsertedUpperTolerance) and (not Proximity):										# SWCAN and J1772 both begin with 12VDC and transition to PilotVoltageInsertedNominal
 
 			if (time()>ProximityLostTime+15):			# wait at least 15 seconds after the plug was removed to start looking for proximity again
 				if ProximityCheckStartTime==-1:
@@ -588,7 +590,7 @@ while True:
 					(
 							(SWCAN_Relay.is_lit and (CurrentProximityAnalogVoltage < ProximityVoltageInsertedNominal-ProximityVoltageInsertedLowerTolerance))		# SWCAN
 						or
-							(PilotMaxVoltage > PilotVoltageInserted+PilotVoltageInsertedTolerance*2)													# J1772
+							(PilotMaxVoltage > PilotVoltageInsertedNominal+PilotVoltageInsertedLowerTolerance)													# J1772
 					)
 				and
 					(not Proximity)
@@ -613,7 +615,7 @@ while True:
 					(
 							(SWCAN_Relay.is_lit and (CurrentProximityAnalogVoltage < ProximityVoltageInsertedNominal-ProximityVoltageInsertedLowerTolerance))		# SWCAN
 						or
-							(PilotMaxVoltage > PilotVoltageInserted+PilotVoltageInsertedTolerance*2)													# J1772
+							(PilotMaxVoltage > PilotVoltageInsertedNominal+PilotVoltageInsertedLowerTolerance)													# J1772
 					)
 				and
 					(Proximity)
@@ -651,14 +653,14 @@ while True:
 
 		# provide more information about the status if connected and not using SWCAN
 		if Proximity and not SWCAN_Relay.is_lit:
-			if StateB and (PilotMaxVoltage < PilotVoltageInsertedAndCarReady+PilotVoltageInsertedAndCarReadyTolerance):
+			if StateB and (PilotMaxVoltage < PilotVoltageInsertedAndCarReadyNominal+PilotVoltageInsertedAndCarReadyUpperTolerance):
 				GUI.StatusAdd(BigText='Cable Inserted, Ready To Charge', MinDisplayTime=1.5)
 				StateC=True
 				StateB=False
 
 				logger.info('Cable Inserted And Car Ready To Charge')
 				logger.info("Pilot max voltage: "+str(PilotMaxVoltage)+',   Proximity Voltage: '+str(CurrentProximityAnalogVoltage))
-			elif StateC and (PilotMaxVoltage > PilotVoltageInsertedAndCarReady+PilotVoltageInsertedAndCarReadyTolerance*2):
+			elif StateC and (PilotMaxVoltage > PilotVoltageInsertedAndCarReadyNominal+PilotVoltageInsertedAndCarReadyLowerTolerance):
 
 				if ManualPayState!='CreditExhausted': 								# don't show this message if credit was exhausted and that is why it is stopped.
 					GUI.StatusAdd(BigText='Cable Inserted, Car Idle', MinDisplayTime=1.5)		# car not ready and/or TeslaTab J1772 adapter plugged into charge cable but not car
