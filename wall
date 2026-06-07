@@ -58,7 +58,6 @@ from math import ceil
 
 ProximityVoltageInsertedNominal=1.5						# Voltage that indicates charge cable has been plugged in
 ProximityVoltageInsertedUpperTolerance=0.25
-ProximityVoltageInsertedLowerTolerance=0.75				# not sure why voltage seems to dip down so low sometimes while connected. Nominal current should be ~10mA, so seems like it should be stable. Is tesla doing some other communication on the proximity pin that is outside of the J1772 specification?
 
 StateB=False
 PilotVoltageInsertedNominal=9
@@ -588,9 +587,15 @@ while True:
 
 		elif	(
 					(
-							(SWCAN_Relay.is_lit and (CurrentProximityAnalogVoltage < ProximityVoltageInsertedNominal-ProximityVoltageInsertedLowerTolerance))		# SWCAN
-						or
-							(PilotMaxVoltage > PilotVoltageInsertedNominal+PilotVoltageInsertedLowerTolerance)													# J1772
+							# For SWCAN this logic relies on the TWC to turn off its transceiver and then switch back to J1772 mode (likely it decides it is time to do this when it detects no CAN messages)
+							# putting out a constant +12VDC (until re-inserted into a car). Board A0 will still have SWCAN connected to the pilot pin for a short
+							# period of time here. This will result in a temporary potentially higher voltage being sent to the SWCAN transceiver but
+							# this may not actually matter much because the SWCAN transceiver should be able to handle that voltage. However, it would be best to
+							# change this to properly listen for no messages on SWCAN and then disconnect on its own without relying on the TWC to put out a constant +12VDC.
+							# The current approach also assumes that normal SWCAN messages don't output any levels as high as +12VDC, which is not as general enough as
+							# checking for no new messages on the SWCAN bus.
+							# For non-SWCAN it should switch to a +/-12V PWM signal instead, then switch to +12VDC by the TWC.
+							(PilotMaxVoltage > PilotVoltageInsertedNominal+PilotVoltageInsertedLowerTolerance)
 					)
 				and
 					(not Proximity)
@@ -613,9 +618,8 @@ while True:
 
 		elif	(
 					(
-							(SWCAN_Relay.is_lit and (CurrentProximityAnalogVoltage < ProximityVoltageInsertedNominal-ProximityVoltageInsertedLowerTolerance))		# SWCAN
-						or
-							(PilotMaxVoltage > PilotVoltageInsertedNominal+PilotVoltageInsertedLowerTolerance)													# J1772
+							# see detailed note above that also applies here too
+							(PilotMaxVoltage > PilotVoltageInsertedNominal+PilotVoltageInsertedLowerTolerance)
 					)
 				and
 					(Proximity)
